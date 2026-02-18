@@ -509,7 +509,7 @@ def _setup_dynamic_tools(tools_registry, tool_schemas, messages):
             lines.append(f"- **{t['name']}**: {t['description'][:120]}")
         return "\n".join(lines)
 
-    def _handle_enable_tools(tools: str = "", ctx=None, **kwargs):
+    def _handle_enable_tools(ctx=None, tools: str = "", **kwargs):
         names = [n.strip() for n in tools.split(",") if n.strip()]
         enabled, not_found = [], []
         for name in names:
