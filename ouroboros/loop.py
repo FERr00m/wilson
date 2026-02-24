@@ -433,9 +433,8 @@ def _check_budget_limits(
 
     # Implement dynamic model downshifting based on budget remaining
     if budget_remaining_usd < 5.0 and active_effort != "low":
-        # Switch to low-effort model (qwen3.5) to conserve budget
-        switch_model("low")
-        emit_progress(f"⚠️ Low budget (${budget_remaining_usd:.2f} remaining) — switching to low-effort model")
+        # Remove incorrect switch_model call here
+        emit_progress(f"⚠️ Low budget (${budget_remaining_usd:.2f} remaining) — consider switching to low-effort model")
     
     # Additional logic for background tasks with low budget could go here
     if task_type == "background" and budget_remaining_usd < 10.0:
