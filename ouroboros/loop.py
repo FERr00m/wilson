@@ -443,5 +443,5 @@ def _check_budget_limits(
     return None
 
 # Core loop function (stubbed for this example - real implementation would be here)
-def run_loop():
+def run_llm_loop():
     pass
