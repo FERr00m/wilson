@@ -14,7 +14,6 @@ logger = logging.getLogger(__name__)
 
 _BROWSER_MANAGER = None
 
-
 class BrowserManager:
     def __init__(self):
         self.playwright = None
@@ -106,7 +105,37 @@ class BrowserManager:
                     configurable: true
                 });
                 
-                // 4. Consistent language/platform
+                // 4. WebGL vendor/renderer spoofing (critical fix)
+                const webglParams = {
+                    'WEBGL_RENDERER': 'ANGLE (Intel(R) UHD Graphics 630 Direct3D11 vs_5_0 ps_5_0)',
+                    'WEBGL_VENDOR': 'Intel Inc.',
+                    'UNMASKED_VENDOR_WEBGL': 'Intel Inc.',
+                    'UNMASKED_RENDERER_WEBGL': 'Intel(R) UHD Graphics 630'
+                };
+                
+                const getParameter = WebGLRenderingContext.prototype.getParameter;
+                WebGLRenderingContext.prototype.getParameter = function(parameter) {
+                    if (webglParams[parameter]) {
+                        return webglParams[parameter];
+                    }
+                    return getParameter.apply(this, [parameter]);
+                };
+                
+                // 5. Canvas fingerprint variation (add natural entropy)
+                const toDataURL = HTMLCanvasElement.prototype.toDataURL;
+                HTMLCanvasElement.prototype.toDataURL = function(type, quality) {
+                    // Add minimal random noise to break hash consistency
+                    const context = this.getContext('2d');
+                    if (context) {
+                        const x = Math.floor(Math.random() * 2);
+                        const y = Math.floor(Math.random() * 2);
+                        context.fillStyle = `rgba(${x},${y},0,0.01)`;
+                        context.fillRect(0, 0, 1, 1);
+                    }
+                    return toDataURL.apply(this, arguments);
+                };
+                
+                // 6. Consistent language/platform
                 Object.defineProperty(navigator, 'languages', {
                     get: () => ['en-US', 'en'],
                     configurable: true
@@ -116,7 +145,7 @@ class BrowserManager:
                     configurable: true
                 });
                 
-                // 5. Fix Permission API
+                // 7. Fix Permission API
                 const originalQuery = window.navigator.permissions.query;
                 window.navigator.permissions.query = (parameters) => (
                     parameters.name === 'notifications' ?
