@@ -1,4 +1,4 @@
-"""Web search tool."""
+'''Web search tool.'''
 
 from __future__ import annotations
 
@@ -16,8 +16,8 @@ def _web_search(ctx: ToolContext, query: str) -> str:
         encoded_query = urllib.parse.quote(query)
         api_url = f"https://api.duckduckgo.com/?q={encoded_query}&format=json"
         
-        # Исправлен вызов browse_page через правильный метод
-        page_result = ctx.call_tool('browse_page', url=api_url, output='text')
+        # ИСПРАВЛЕНО: Используем корректный метод вызова инструмента
+        page_result = ctx.tools['browse_page'](url=api_url, output='text')
         
         # Обрабатываем JSON ответа
         data = json.loads(page_result)
