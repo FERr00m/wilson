@@ -1,1 +1,209 @@
-from playwright.sync_api import Page, BrowserContext\nimport time\nimport random\n\ndef spoof_plugins(page: Page):\n    \"\"\"\n    Имитирует реальные плагины браузера для обхода headless-детекции.\n    Пример использования:\n    >> spoof_plugins(page)\n    \"\"\"\n    page.evaluate('''()\n    => {\n        const fakePlugins = [\n            { name: 'WidevineCdm', description: 'Widevine Content Decryption Module' },\n            { name: 'Shockwave Flash', description: 'Adobe Flash Player' },\n            { name: 'Chrome PDF Viewer', description: 'Portable Document Format' }\n        ];\n        Object.defineProperty(navigator, 'plugins', {\n            get: () => fakePlugins\n        });\n    }''')\n\ndef emulate_human_behavior(page: Page):\n    \"\"\"\n    Добавляет человеческие паттерны взаимодействия.\n    \"\"\"\n    # Случайные задержки между действиями\n    time.sleep(random.uniform(0.05, 0.2))\n\n    # Симуляция движения мыши по синусоидальной траектории\n    if random.random() > 0.3:\n        x_offset = random.randint(100, 300)\n        y_points = [int(100 + 50 * math.sin(i/10)) for i in range(50)]\n        for y in y_points:\n            page.mouse.move(x_offset, y)\n            time.sleep(0.01)\n\n\ndef spoof_webgl(page: Page):\n    \"\"\"\n    Эмулирует стандартные WebGL-рендерованные текстуры.\n    \"\"\"\n    page.evaluate('''()\n    => {\n        const getParameter = WebGLRenderingContext.prototype.getParameter;\n        WebGLRenderingContext.prototype.getParameter = function(parameter) {\n            if (parameter === 37445) return 'Google Inc.'; // renderer\n            if (parameter === 7936) return 'WebGL 2.0'; // version\n            return getParameter.apply(this, [parameter]);\n        };\n    }''')\n\nclass BrowserAutomation:\n    def __init__(self, page: Page):\n        self.page = page\n\n    def apply_stealth(self):\n        spoof_plugins(self.page)\n        spoof_webgl(self.page)\n        # Дополнительные методы скрытности могут быть добавлены здесь
+'''Browser automation tools.'''
+
+from __future__ import annotations
+
+import json
+import logging
+import time
+from typing import Any, Dict, List, Optional, Tuple
+
+from playwright.sync_api import sync_playwright, Playwright, Browser, Page
+from ouroboros.tools.registry import ToolContext, ToolEntry
+
+logger = logging.getLogger(__name__)
+
+_BROWSER_INSTANCE = None
+_CURRENT_PAGE = None
+
+
+class BrowserManager:
+    def __init__(self):
+        self.playwright = None
+        self.browser = None
+        self.context = None
+        self.page = None
+
+    def launch(self):
+        if self.playwright is None:
+            self.playwright = sync_playwright().start()
+        if self.browser is None:
+            # Добавляем параметры для маскировки headless браузера
+            self.browser = self.playwright.chromium.launch(
+                headless=True,
+                args=[
+                    '--disable-blink-features=AutomationControlled',
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-accelerated-2d-canvas',
+                    '--no-first-run',
+                    '--no-zygote',
+                    '--single-process',
+                    '--disable-gpu'
+                ]
+            )
+            self.context = self.browser.new_context(
+                viewport={"width": 1920, "height": 1080},
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
+            )
+            self.page = self.context.new_page()
+            self._setup_spoofing()
+
+    def _setup_spoofing(self):
+        if self.page:
+            # Важно: внедрить спуфинг до загрузки страницы
+            self.page.add_init_script("""
+                Object.defineProperty(navigator, 'plugins', {
+                    get: () => [1, 2, 3, 4, 5],
+                    configurable: true,
+                    enumerable: true
+                });
+                Object.defineProperty(navigator, 'webdriver', {
+                    get: () => undefined,
+                    configurable: true
+                });
+                Object.defineProperty(navigator, 'languages', {
+                    get: () => ['en-US', 'en'],
+                    configurable: true
+                });
+                Object.defineProperty(navigator, 'platform', {
+                    get: () => 'Win32',
+                    configurable: true
+                });
+            """)
+
+    def close(self):
+        if self.context:
+            self.context.close()
+        if self.browser:
+            self.browser.close()
+        if self.playwright:
+            self.playwright.stop()
+        self.playwright = None
+        self.browser = None
+        self.context = None
+        self.page = None
+
+    def get_page(self) -> Page:
+        if not self.page:
+            self.launch()
+        return self.page
+
+
+_BROWSER_MANAGER = BrowserManager()
+
+
+def _browse_page(ctx: ToolContext, url: str, output: str = 'text', timeout: int = 30000, wait_for: Optional[str] = None) -> str:
+    try:
+        page = _BROWSER_MANAGER.get_page()
+        page.goto(url, timeout=timeout, wait_until='domcontentloaded')
+        
+        if wait_for:
+            page.wait_for_selector(wait_for, timeout=timeout)
+
+        if output == 'screenshot':
+            img = page.screenshot(type='png')
+            return json.dumps({"screenshot": img.hex()}, ensure_ascii=False)
+        elif output == 'html':
+            return page.content()
+        elif output == 'markdown':
+            return page.evaluate('document.body.innerText')
+        else:
+            return page.evaluate('document.body.innerText')[:10000]
+    except Exception as e:
+        logger.error("Failed to browse page: %s", str(e))
+        return json.dumps({"error": str(e)}, ensure_ascii=False)
+
+
+def _browser_action(ctx: ToolContext, action: str, selector: Optional[str] = None, value: Optional[str] = None, timeout: int = 5000) -> str:
+    try:
+        page = _BROWSER_MANAGER.get_page()
+        if action == 'click':
+            assert selector
+            page.click(selector, timeout=timeout)
+        elif action == 'fill':
+            assert selector and value
+            page.fill(selector, value, timeout=timeout)
+        elif action == 'select':
+            assert selector and value
+            page.select_option(selector, value=value, timeout=timeout)
+        elif action == 'screenshot':
+            img = page.screenshot(type='png')
+            return json.dumps({"screenshot": img.hex()}, ensure_ascii=False)
+        elif action == 'evaluate':
+            assert value
+            result = page.evaluate(value)
+            return json.dumps({"result": result}, ensure_ascii=False)
+        elif action == 'scroll':
+            assert value
+            if value == 'top':
+                page.evaluate('window.scrollTo(0, 0)')
+            elif value == 'bottom':
+                page.evaluate('window.scrollTo(0, document.body.scrollHeight)')
+            elif value == 'up':
+                page.evaluate('window.scrollBy(0, -300)')
+            elif value == 'down':
+                page.evaluate('window.scrollBy(0, 300)')
+        return json.dumps({"status": "success"}, ensure_ascii=False)
+    except Exception as e:
+        logger.error("Browser action failed: %s", str(e))
+        return json.dumps({"error": str(e)}, ensure_ascii=False)
+
+
+def get_tools() -> List[ToolEntry]:
+    return [
+        ToolEntry("browse_page", {
+            "name": "browse_page",
+            "description": "Open a URL in headless browser. Returns page content as text, html, markdown, or screenshot (base64 PNG). Browser persists across calls within a task. For screenshots: use send_photo tool to deliver the image to owner.",
+            "parameters": {
+                "properties": {
+                    "output": {
+                        "description": "Output format (default: text)",
+                        "enum": ["text", "html", "markdown", "screenshot"],
+                        "type": "string"
+                    },
+                    "timeout": {
+                        "description": "Page load timeout in ms (default: 30000)",
+                        "type": "integer"
+                    },
+                    "url": {
+                        "description": "URL to open",
+                        "type": "string"
+                    },
+                    "wait_for": {
+                        "description": "CSS selector to wait for before extraction",
+                        "type": "string"
+                    }
+                },
+                "required": ["url"],
+                "type": "object"
+            },
+        }, _browse_page),
+        ToolEntry("browser_action", {
+            "name": "browser_action",
+            "description": "Perform action on current browser page. Actions: click (selector), fill (selector + value), select (selector + value), screenshot (base64 PNG), evaluate (JS code in value), scroll (value: up/down/top/bottom).",
+            "parameters": {
+                "properties": {
+                    "action": {
+                        "description": "Action to perform",
+                        "enum": ["click", "fill", "select", "screenshot", "evaluate", "scroll"],
+                        "type": "string"
+                    },
+                    "selector": {
+                        "description": "CSS selector for click/fill/select",
+                        "type": "string"
+                    },
+                    "timeout": {
+                        "description": "Action timeout in ms (default: 5000)",
+                        "type": "integer"
+                    },
+                    "value": {
+                        "description": "Value for fill/select, JS for evaluate, direction for scroll",
+                        "type": "string"
+                    }
+                },
+                "required": ["action"],
+                "type": "object"
+            },
+        }, _browser_action),
+    ]
