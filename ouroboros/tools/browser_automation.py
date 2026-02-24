@@ -68,6 +68,11 @@ class BrowserManager:
                     refresh: function() {}
                 };
                 
+                // Fix PluginArray toStringTag for proper type detection
+                Object.defineProperty(pluginArray, Symbol.toStringTag, {
+                    get: function() { return 'PluginArray'; }
+                });
+                
                 // Properly construct PluginArray prototype chain
                 pluginArray.__proto__ = {
                     __proto__: Array.prototype,
