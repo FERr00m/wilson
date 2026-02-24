@@ -105,37 +105,7 @@ class BrowserManager:
                     configurable: true
                 });
                 
-                // 4. WebGL vendor/renderer spoofing (critical fix)
-                const webglParams = {
-                    'WEBGL_RENDERER': 'ANGLE (Intel(R) UHD Graphics 630 Direct3D11 vs_5_0 ps_5_0)',
-                    'WEBGL_VENDOR': 'Intel Inc.',
-                    'UNMASKED_VENDOR_WEBGL': 'Intel Inc.',
-                    'UNMASKED_RENDERER_WEBGL': 'Intel(R) UHD Graphics 630'
-                };
-                
-                const getParameter = WebGLRenderingContext.prototype.getParameter;
-                WebGLRenderingContext.prototype.getParameter = function(parameter) {
-                    if (webglParams[parameter]) {
-                        return webglParams[parameter];
-                    }
-                    return getParameter.apply(this, [parameter]);
-                };
-                
-                // 5. Canvas fingerprint variation (add natural entropy)
-                const toDataURL = HTMLCanvasElement.prototype.toDataURL;
-                HTMLCanvasElement.prototype.toDataURL = function(type, quality) {
-                    // Add minimal random noise to break hash consistency
-                    const context = this.getContext('2d');
-                    if (context) {
-                        const x = Math.floor(Math.random() * 2);
-                        const y = Math.floor(Math.random() * 2);
-                        context.fillStyle = `rgba(${x},${y},0,0.01)`;
-                        context.fillRect(0, 0, 1, 1);
-                    }
-                    return toDataURL.apply(this, arguments);
-                };
-                
-                // 6. Consistent language/platform
+                // 4. Consistent language/platform
                 Object.defineProperty(navigator, 'languages', {
                     get: () => ['en-US', 'en'],
                     configurable: true
@@ -145,13 +115,53 @@ class BrowserManager:
                     configurable: true
                 });
                 
-                // 7. Fix Permission API
+                // 5. Fix Permission API
                 const originalQuery = window.navigator.permissions.query;
                 window.navigator.permissions.query = (parameters) => (
                     parameters.name === 'notifications' ?
                         Promise.resolve({ state: Notification.permission }) :
                         originalQuery(parameters)
                 );
+                
+                // 6. WebGL spoofing profiles
+                const webglProfiles = [
+                  {
+                    vendor: 'Intel Inc.',
+                    renderer: 'Intel Iris OpenGL Engine'
+                  },
+                  {
+                    vendor: 'NVIDIA Corporation',
+                    renderer: 'NVIDIA GeForce RTX 3080/PCIe/SSE2'
+                  },
+                  {
+                    vendor: 'ATI Technologies Inc.',
+                    renderer: 'AMD Radeon RX 6800 XT'
+                  }
+                ];
+
+                const randomProfile = webglProfiles[Math.floor(Math.random() * webglProfiles.length)];
+
+                const originalGetParameter = WebGLRenderingContext.prototype.getParameter;
+                WebGLRenderingContext.prototype.getParameter = function(parameter) {
+                  if (parameter === 7937) return randomProfile.vendor;
+                  if (parameter === 7938) return randomProfile.renderer;
+                  return originalGetParameter.apply(this, [parameter]);
+                };
+
+                // 7. Canvas entropy
+                const originalFillText = CanvasRenderingContext2D.prototype.fillText;
+                CanvasRenderingContext2D.prototype.fillText = function(text, x, y, maxWidth) {
+                  const offsetX = (Math.random() - 0.5) * 0.1;
+                  const offsetY = (Math.random() - 0.5) * 0.1;
+                  originalFillText.call(this, text, x + offsetX, y + offsetY, maxWidth);
+                };
+
+                const originalStrokeText = CanvasRenderingContext2D.prototype.strokeText;
+                CanvasRenderingContext2D.prototype.strokeText = function(text, x, y, maxWidth) {
+                  const offsetX = (Math.random() - 0.5) * 0.1;
+                  const offsetY = (Math.random() - 0.5) * 0.1;
+                  originalStrokeText.call(this, text, x + offsetX, y + offsetY, maxWidth);
+                };
             ''')
 
     def close(self):
@@ -174,7 +184,6 @@ class BrowserManager:
 
 _BROWSER_MANAGER = BrowserManager()
 
-
 def _browse_page(ctx: ToolContext, url: str, output: str = 'text', timeout: int = 30000, wait_for: Optional[str] = None) -> str:
     try:
         page = _BROWSER_MANAGER.get_page()
@@ -195,7 +204,6 @@ def _browse_page(ctx: ToolContext, url: str, output: str = 'text', timeout: int 
     except Exception as e:
         logger.error("Failed to browse page: %s", str(e))
         return json.dumps({"error": str(e)}, ensure_ascii=False)
-
 
 def _browser_action(ctx: ToolContext, action: str, selector: Optional[str] = None, value: Optional[str] = None, timeout: int = 5000) -> str:
     try:
@@ -230,7 +238,6 @@ def _browser_action(ctx: ToolContext, action: str, selector: Optional[str] = Non
     except Exception as e:
         logger.error("Browser action failed: %s", str(e))
         return json.dumps({"error": str(e)}, ensure_ascii=False)
-
 
 def get_tools() -> List[ToolEntry]:
     return [
