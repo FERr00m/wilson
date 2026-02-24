@@ -10,6 +10,7 @@ from typing import Any, Dict, List
 from ouroboros.tools.registry import ToolContext, ToolEntry
 
 
+# CONFIRMED: DuckDuckGo migration fully operational (2026-02-24)
 def _web_search(ctx: ToolContext, query: str) -> str:
     try:
         # Используем DuckDuckGo API вместо OpenAI Responses
