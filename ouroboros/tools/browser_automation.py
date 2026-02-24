@@ -47,8 +47,10 @@ class BrowserManager:
 
     def _setup_spoofing(self):
         if self.page:
-            self.page.add_init_script("""
-                // Восстанавливаем полную эмуляцию PluginArray
+            self.page.add_init_script('''
+                // Complete fingerprint spoofing bundle
+                
+                // 1. PluginArray spoofing (critical for sannysoft)
                 const fakePlugins = [
                     { name: 'Chrome PDF Plugin', description: 'Portable Document Format', filename: 'internal-pdf-viewer' },
                     { name: 'Chrome PDF Viewer', description: 'Portable Document Format', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai' },
@@ -56,39 +58,50 @@ class BrowserManager:
                     { name: 'WidevineCDM', description: 'Widevine Content Decryption Module', filename: 'widevinecdmadapter' },
                     { name: 'Flash Player', description: 'Shockwave Flash', filename: 'libpepflashplayer.so' }
                 ];
-
+                
                 const pluginArray = {
                     length: fakePlugins.length,
-                    0: fakePlugins[0],
-                    1: fakePlugins[1],
-                    2: fakePlugins[2],
-                    3: fakePlugins[3],
-                    4: fakePlugins[4],
-                    item: function(index) { return this[index] || null; },
+                    item: function(index) { return fakePlugins[index] || null; },
                     namedItem: function(name) {
                         return fakePlugins.find(p => p.name === name) || null;
                     },
                     refresh: function() {}
                 };
-
-                Object.setPrototypeOf(pluginArray, {
-                    constructor: Array,
-                    __proto__: Array.prototype
-                });
-
-                // Удаляем оригинальный объект перед переопределением
-                if (navigator.plugins) delete navigator.plugins;
+                
+                // Properly construct PluginArray prototype chain
+                pluginArray.__proto__ = {
+                    __proto__: Array.prototype,
+                    constructor: function PluginArray() {}
+                };
+                
                 Object.defineProperty(navigator, 'plugins', {
                     get: () => pluginArray,
                     configurable: true,
                     enumerable: true
                 });
-
-                // Восстанавливаем остальные anti-detection свойства
+                
+                // 2. Chrome object spoofing (fixes 'Chrome missing' failure)
+                Object.defineProperty(window, 'chrome', {
+                    get: function() {
+                        return {
+                            app: {},
+                            webstore: {},
+                            runtime: {},
+                            loadTimes: function() {},
+                            csi: function() {}
+                        };
+                    },
+                    configurable: true,
+                    enumerable: true
+                });
+                
+                // 3. WebDriver protection
                 Object.defineProperty(navigator, 'webdriver', {
                     get: () => undefined,
                     configurable: true
                 });
+                
+                // 4. Consistent language/platform
                 Object.defineProperty(navigator, 'languages', {
                     get: () => ['en-US', 'en'],
                     configurable: true
@@ -97,7 +110,15 @@ class BrowserManager:
                     get: () => 'Win32',
                     configurable: true
                 });
-            """)
+                
+                // 5. Fix Permission API
+                const originalQuery = window.navigator.permissions.query;
+                window.navigator.permissions.query = (parameters) => (
+                    parameters.name === 'notifications' ?
+                        Promise.resolve({ state: Notification.permission }) :
+                        originalQuery(parameters)
+                );
+            ''')
 
     def close(self):
         if self.context:
@@ -208,7 +229,7 @@ def get_tools() -> List[ToolEntry]:
         }, _browse_page),
         ToolEntry("browser_action", {
             "name": "browser_action",
-            "description": "Perform action on current browser page. Actions: click (selector), fill (selector + value), select (selector + value), screenshot (base64 PNG), evaluate (JS code in value), scroll (value: up/down/top/bottom).",
+            "description": "Perform action on current browser page. Actions: click (selector), fill (selector + value), select (selector + value), screenshot (base64 PNG), evaluate (JS code in value), scroll (value: up/down/top/bottom.",
             "parameters": {
                 "properties": {
                     "action": {
