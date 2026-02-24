@@ -48,85 +48,28 @@ class BrowserManager:
     def _setup_spoofing(self):
         if self.page:
             self.page.add_init_script("""
-                // Полная эмуляция navigator.plugins с 5 реалистичными плагинами
-                const fakePlugins = [
-                    {
-                        name: 'Chrome PDF Plugin',
-                        description: 'Portable Document Format',
-                        filename: 'internal-pdf-viewer',
-                        version: '131.0.0.0',
-                        length: 0
-                    },
-                    {
-                        name: 'Chrome PDF Viewer',
-                        description: 'Portable Document Format',
-                        filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai',
-                        version: '131.0.0.0',
-                        length: 0
-                    },
-                    {
-                        name: 'Native Client',
-                        description: 'Native Client Executable',
-                        filename: 'internal-nacl-plugin',
-                        version: '131.0.0.0',
-                        length: 0
-                    },
-                    {
-                        name: 'Widevine Content Decryption Module',
-                        description: 'Widevine Content Decryption Module',
-                        filename: 'widevinecdmadapter',
-                        version: '4.10.2698.0',
-                        length: 0
-                    },
-                    {
-                        name: 'Shockwave Flash',
-                        description: 'Adobe Flash Player',
-                        filename: 'libpepflashplayer.so',
-                        version: '32.0.0.468',
-                        length: 0
-                    }
-                ];
-
-                // Создаем финальный объект плагинов с правильными свойствами
-                const pluginArray = {
-                    0: fakePlugins[0],
-                    1: fakePlugins[1],
-                    2: fakePlugins[2],
-                    3: fakePlugins[3],
-                    4: fakePlugins[4],
-                    length: fakePlugins.length,
-                    item: function(index) { return this[index] || null; },
-                    namedItem: function(name) { return fakePlugins.find(p => p.name === name) || null; },
-                    refresh: function() {},
-                    [Symbol.iterator]: function* () {
-                        for (let i = 0; i < this.length; i++) {
-                            yield this[i];
-                        }
-                    }
-                };
-
-                // Настройка прототипа для правильной типизации
-                Object.setPrototypeOf(pluginArray, {
-                    constructor: Array,
-                    __proto__: Array.prototype
-                });
-
-                // Окончательная настройка navigator.plugins
+                // Максимально упрощенная эмуляция для обхода детекции
                 Object.defineProperty(navigator, 'plugins', {
-                    get: function() { return pluginArray; },
+                    get: () => ({
+                        length: 5,
+                        0: { name: 'Chrome PDF Plugin' },
+                        1: { name: 'Chrome PDF Viewer' },
+                        2: { name: 'Native Client' },
+                        3: { name: 'WidevineCDM' },
+                        4: { name: 'Flash Player' },
+                        item: (i) => i < 5 ? ({ name: `Plugin ${i}` }) : null,
+                        namedItem: (name) => null,
+                        refresh: () => {},
+ fairest way to mimic minimal required structure
+                    }),
                     configurable: true,
                     enumerable: true
                 });
 
-                // Дополнительные настройки анти-детекции
-                Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-                Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
-                Object.defineProperty(navigator, 'platform', { get: () => 'Win32' });
-                Object.defineProperty(navigator, 'permissions', {
-                    get: async () => ({
-                        query: () => ({ state: 'denied' })
-                    })
-                });
+                // Дополнительные анти-детекционные настройки
+                Object.defineProperty(navigator, 'webdriver', { get: () => undefined, configurable: true });
+                Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'], configurable: true });
+                Object.defineProperty(navigator, 'platform', { get: () => 'Win32', configurable: true });
             """)
 
     def close(self):
