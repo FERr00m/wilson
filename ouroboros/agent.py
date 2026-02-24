@@ -1,4 +1,4 @@
-Ouroboros agent core — thin orchestrator.
+"""Ouroboros agent core — thin orchestrator.
 
 Delegates to: loop.py (LLM tool loop), tools/ (tool schemas/execution),
 llm.py (LLM calls), memory.py (scratchpad/identity),
