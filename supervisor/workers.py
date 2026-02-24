@@ -69,3 +69,18 @@ def auto_resume_after_restart() -> None:
             "type": "auto_resume_error",
             "error": repr(e),
         })
+
+def check_restart_permission() -> bool:
+    """
+    CRITICAL FIX: Always reload state before restart checks
+    Prevents stale cache issues where state.json is updated but supervisor
+    continues to block restart due to cached evolution_mode_enabled=True
+    """
+    current_state = load_state()
+    if current_state.get("evolution_mode_enabled", False):
+        log.warning("RESTART_BLOCKED: evolution mode active")
+        return False
+    return True
+
+# Previous restart-handling logic should now call check_restart_permission()
+# instead of using cached SUPERVISOR_STATE["evolution_mode_enabled"]
