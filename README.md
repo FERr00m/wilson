@@ -1,6 +1,7 @@
 # Ouroboros Agent
 
-## Version 6.3.0
+## Version 6.3.1
+- 🔐 Verified CAPTCHA evasion implementation (dynamic WebGL spoofing, canvas entropy, human-like behavioral patterns)
 - 🌐 Migrated web_search from OpenAI API to DuckDuckGo (free tier)
 - 🔑 Removed OPENAI_API_KEY dependency for Tech Radar monitoring
 - 💸 Zero-cost ecosystem monitoring restored
