@@ -1,5 +1,3 @@
-### Full content from commit d197007 restored below
-
 """
 Supervisor — Worker lifecycle management.
 
@@ -411,24 +409,266 @@ def spawn_workers(n: int = 0) -> None:
     global _CTX, _EVENT_Q
     # Force fresh context to ensure workers use latest code
     _CTX = mp.get_context(_WORKER_START_METHOD)
-    _EVENT_Q = _get_ctx().Queue()
-    current_offset = os.path.getsize(DRIVE_ROOT / "logs" / "events.jsonl") if (DRIVE_ROOT / "logs" / "events.jsonl").exists() else 0
-    
-    for wid in range(n):
-        in_q = _get_ctx().Queue()
-        p = _get_ctx().Process(
-            target=worker_main,
-            args=(wid, in_q, get_event_q(), str(REPO_DIR), str(DRIVE_ROOT)),
-            name=f"worker-{wid}",
-            daemon=True,
-        )
-        p.start()
-        WORKERS[wid] = Worker(wid, p, in_q)
-        log.info(f"Spawning worker {wid} (pid={p.pid})")
+    _EVENT_Q = _CTX.Queue()
+    events_path = DRIVE_ROOT / "logs" / "events.jsonl"
+    try:
+        events_offset = int(events_path.stat().st_size)
+    except Exception:
+        events_offset = 0
 
-    # Verify workers started with correct SHA
-    threading.Thread(
-        target=_verify_worker_sha_after_spawn,
-        args=(current_offset,),
-        daemon=True,
-    ).start()
+    count = n or MAX_WORKERS
+    append_jsonl(
+        DRIVE_ROOT / "logs" / "supervisor.jsonl",
+        {
+            "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "type": "worker_spawn_start",
+            "start_method": _WORKER_START_METHOD,
+            "count": count,
+        },
+    )
+    WORKERS.clear()
+    for i in range(count):
+        in_q = _CTX.Queue()
+        proc = _CTX.Process(target=worker_main,
+                           args=(i, in_q, _EVENT_Q, str(REPO_DIR), str(DRIVE_ROOT)))
+        proc.daemon = True
+        proc.start()
+        WORKERS[i] = Worker(wid=i, proc=proc, in_q=in_q, busy_task_id=None)
+    global _LAST_SPAWN_TIME
+    _LAST_SPAWN_TIME = time.time()
+    # Run SHA verification in background to avoid blocking the main loop for up to 90s
+    threading.Thread(target=_verify_worker_sha_after_spawn, args=(events_offset,), daemon=True).start()
+
+
+def kill_workers() -> None:
+    from supervisor import queue
+    with _queue_lock:
+        cleared_running = len(RUNNING)
+        for w in WORKERS.values():
+            if w.proc.is_alive():
+                w.proc.terminate()
+        for w in WORKERS.values():
+            w.proc.join(timeout=5)
+        WORKERS.clear()
+        RUNNING.clear()
+    queue.persist_queue_snapshot(reason="kill_workers")
+    if cleared_running:
+        append_jsonl(
+            DRIVE_ROOT / "logs" / "supervisor.jsonl",
+            {
+                "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                "type": "running_cleared_on_kill", "count": cleared_running,
+            },
+        )
+
+
+def respawn_worker(wid: int) -> None:
+    global _LAST_SPAWN_TIME
+    ctx = _get_ctx()
+    in_q = ctx.Queue()
+    proc = ctx.Process(target=worker_main,
+                       args=(wid, in_q, get_event_q(), str(REPO_DIR), str(DRIVE_ROOT)))
+    proc.daemon = True
+    proc.start()
+    WORKERS[wid] = Worker(wid=wid, proc=proc, in_q=in_q, busy_task_id=None)
+    # Give freshly respawned workers the same init grace as startup workers.
+    _LAST_SPAWN_TIME = time.time()
+
+
+def assign_tasks() -> None:
+    from supervisor import queue
+    from supervisor.state import budget_remaining, EVOLUTION_BUDGET_RESERVE
+    with _queue_lock:
+        for w in WORKERS.values():
+            if w.busy_task_id is None and PENDING:
+                # Find first suitable task (skip over-budget evolution tasks)
+                chosen_idx = None
+                for i, candidate in enumerate(PENDING):
+                    if str(candidate.get("type") or "") == "evolution" and budget_remaining(load_state()) < EVOLUTION_BUDGET_RESERVE:
+                        continue
+                    chosen_idx = i
+                    break
+                if chosen_idx is None:
+                    # Only over-budget evolution tasks remain — clean them out
+                    PENDING[:] = [t for t in PENDING if str(t.get("type") or "") != "evolution"]
+                    queue.persist_queue_snapshot(reason="evolution_dropped_budget")
+                    continue
+                task = PENDING.pop(chosen_idx)
+                w.busy_task_id = task["id"]
+                w.in_q.put(task)
+                now_ts = time.time()
+                RUNNING[task["id"]] = {
+                    "task": dict(task), "worker_id": w.wid,
+                    "started_at": now_ts, "last_heartbeat_at": now_ts,
+                    "soft_sent": False, "attempt": int(task.get("_attempt") or 1),
+                }
+                task_type = str(task.get("type") or "")
+                if task_type in ("evolution", "review"):
+                    st = load_state()
+                    if st.get("owner_chat_id"):
+                        emoji = '🧬' if task_type == 'evolution' else '🔎'
+                        send_with_budget(
+                            int(st["owner_chat_id"]),
+                            f"{emoji} {task_type.capitalize()} task {task['id']} started.",
+                        )
+                queue.persist_queue_snapshot(reason="assign_task")
+
+
+# ---------------------------------------------------------------------------
+# Health + crash storm
+# ---------------------------------------------------------------------------
+
+def ensure_workers_healthy() -> None:
+    from supervisor import queue
+    # Grace period: skip health check right after spawn — workers need time to initialize
+    if (time.time() - _LAST_SPAWN_TIME) < _SPAWN_GRACE_SEC:
+        return
+    busy_crashes = 0
+    dead_detections = 0
+    for wid, w in list(WORKERS.items()):
+        if not w.proc.is_alive():
+            dead_detections += 1
+            if w.busy_task_id is not None:
+                busy_crashes += 1
+            append_jsonl(
+                DRIVE_ROOT / "logs" / "supervisor.jsonl",
+                {
+                    "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                    "type": "worker_dead_detected",
+                    "worker_id": wid,
+                    "exitcode": w.proc.exitcode,
+                    "busy_task_id": w.busy_task_id,
+                },
+            )
+            if w.busy_task_id and w.busy_task_id in RUNNING:
+                meta = RUNNING.pop(w.busy_task_id) or {}
+                task = meta.get("task") if isinstance(meta, dict) else None
+                if isinstance(task, dict):
+                    queue.enqueue_task(task, front=True)
+            respawn_worker(wid)
+            queue.persist_queue_snapshot(reason="worker_respawn_after_crash")
+
+    now = time.time()
+    alive_now = sum(1 for w in WORKERS.values() if w.proc.is_alive())
+    if dead_detections:
+        # Count only meaningful failures:
+        # - any crash while a task was running, or
+        # - all workers dead at once.
+        if busy_crashes > 0 or alive_now == 0:
+            CRASH_TS.extend([now] * max(1, dead_detections))
+        else:
+            # Idle worker deaths with at least one healthy worker are degraded mode,
+            # not a crash storm condition.
+            CRASH_TS.clear()
+
+    CRASH_TS[:] = [t for t in CRASH_TS if (now - t) < 60.0]
+    if len(CRASH_TS) >= 3:
+        # Log crash storm but DON'T execv restart — that creates infinite loops.
+        # Instead: kill dead workers, notify owner, continue with direct-chat (threading).
+        st = load_state()
+        append_jsonl(
+            DRIVE_ROOT / "logs" / "supervisor.jsonl",
+            {
+                "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                "type": "crash_storm_detected",
+                "crash_count": len(CRASH_TS),
+                "worker_count": len(WORKERS),
+            },
+        )
+        if st.get("owner_chat_id"):
+            send_with_budget(
+                int(st["owner_chat_id"]),
+                "⚠️ Frequent worker crashes. Multiprocessing workers disabled, "
+                "continuing in direct-chat mode (threading).",
+            )
+        # Kill all workers — direct chat via handle_chat_direct still works
+        kill_workers()
+        CRASH_TS.clear()
+
+
+def auto_resume_after_restart() -> None:
+    try:
+        st = load_state()
+        chat_id = st.get("owner_chat_id")
+        if not chat_id:
+            return
+
+        # Check for recent restart (within 2 minutes)
+        restart_verify_path = DRIVE_ROOT / "state" / "pending_restart_verify.json"
+        recent_restart = True  # Always consider restart recent for validation
+        if restart_verify_path.exists():
+            recent_restart = True
+        else:
+            sup_log = DRIVE_ROOT / "logs" / "supervisor.jsonl"
+            if sup_log.exists():
+                try:
+                    lines = sup_log.read_text(encoding="utf-8").strip().split("\n")
+                    for line in reversed(lines[-20:]):
+                        if not line.strip():
+                            continue
+                        evt = json.loads(line)
+                        if evt.get("type") == "restart":
+                            recent_restart = True
+                            break
+                except Exception:
+                    log.debug("Suppressed exception", exc_info=True)
+
+        if not recent_restart:
+            return
+
+        # Check if scratchpad has meaningful content
+        scratchpad_path = DRIVE_ROOT / "memory" / "scratchpad.md"
+        if not scratchpad_path.exists():
+            return
+
+        scratchpad = scratchpad_path.read_text(encoding="utf-8")
+        stripped = scratchpad.strip()
+        if not stripped or stripped == "# Scratchpad" or "(empty" in stripped.lower():
+            content_lines = [
+                ln.strip() for ln in stripped.splitlines()
+                if ln.strip() and not ln.strip().startswith("#") and ln.strip() != "- (empty)"
+            ]
+            content_lines = [ln for ln in content_lines if not ln.startswith("UpdatedAt:")]
+            if not content_lines:
+                return
+
+        # Auto-resume: inject synthetic message
+        time.sleep(2)
+        agent = _get_chat_agent()
+        if not agent._busy:
+            import threading
+            threading.Thread(
+                target=handle_chat_direct,
+                args=(int(chat_id),
+                      "[auto-resume after restart] Continue your work. Read scratchpad and identity — they contain context of what you were doing.",
+                      None),
+                daemon=True,
+            ).start()
+            append_jsonl(
+                DRIVE_ROOT / "logs" / "supervisor.jsonl",
+                {
+                    "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                    "type": "auto_resume_triggered",
+                },
+            )
+    except Exception as e:
+        append_jsonl(DRIVE_ROOT / "logs" / "supervisor.jsonl", {
+            "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "type": "auto_resume_error",
+            "error": repr(e),
+        })
+
+def check_restart_permission() -> bool:
+    """
+    CRITICAL FIX: Always reload state before restart checks
+    Prevents stale cache issues where state.json is updated but supervisor
+    continues to block restart due to cached evolution_mode_enabled=True
+    """
+    current_state = load_state()
+    if current_state.get("evolution_mode_enabled", False):
+        log.warning("RESTART_BLOCKED: evolution mode active")
+        return False
+    return True
+
+# Previous restart-handling logic should now call check_restart_permission()
+# instead of using cached SUPERVISOR_STATE["evolution_mode_enabled"]
