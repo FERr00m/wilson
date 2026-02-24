@@ -53,11 +53,72 @@ class BrowserManager:
         if self.page:
             # Важно: внедрить спуфинг до загрузки страницы
             self.page.add_init_script("""
+                // Создаем реалистичные объекты плагинов
+                const fakePlugins = [
+                    {
+                        name: 'Chrome PDF Plugin',
+                        description: 'Portable Document Format',
+                        filename: 'internal-pdf-viewer',
+                        version: '131.0.0.0',
+                        item(index) { return this[index]; },
+                        namedItem(name) { return this.find(p => p.name === name); }
+                    },
+                    {
+                        name: 'Chrome PDF Viewer',
+                        description: 'Portable Document Format',
+                        filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai',
+                        version: '131.0.0.0',
+                        item(index) { return this[index]; },
+                        namedItem(name) { return this.find(p => p.name === name); }
+                    },
+                    {
+                        name: 'Native Client',
+                        description: 'Native Client Executable',
+                        filename: 'internal-nacl-plugin',
+                        version: '131.0.0.0',
+                        item(index) { return this[index]; },
+                        namedItem(name) { return this.find(p => p.name === name); }
+                    },
+                    {
+                        name: 'Widevine Content Decryption Module',
+                        description: 'Widevine Content Decryption Module',
+                        filename: 'widevinecdmadapter',
+                        version: '4.10.2698.0',
+                        item(index) { return this[index]; },
+                        namedItem(name) { return this.find(p => p.name === name); }
+                    },
+                    {
+                        name: 'Shockwave Flash',
+                        description: 'Adobe Flash Player',
+                        filename: 'libpepflashplayer.so',
+                        version: '32.0.0.468',
+                        item(index) { return this[index]; },
+                        namedItem(name) { return this.find(p => p.name === name); }
+                    }
+                ];
+
+                // Настраиваем getter для navigator.plugins
                 Object.defineProperty(navigator, 'plugins', {
-                    get: () => [1, 2, 3, 4, 5],
+                    get: () => ({
+                        length: fakePlugins.length,
+                        __proto__: {
+                            length: fakePlugins.length,
+                            item: (index) => fakePlugins[index] || null,
+                            namedItem: (name) => fakePlugins.find(p => p.name === name) || null,
+                            [Symbol.iterator]: () => fakePlugins.values()
+                        },
+                        ...fakePlugins,
+                        0: fakePlugins[0],
+                        1: fakePlugins[1],
+                        2: fakePlugins[2],
+                        3: fakePlugins[3],
+                        4: fakePlugins[4]
+                    }),
                     configurable: true,
                     enumerable: true
                 });
+
+                // Дополнительные настройки
                 Object.defineProperty(navigator, 'webdriver', {
                     get: () => undefined,
                     configurable: true
