@@ -1,44 +1,50 @@
-"""Web search tool."""
+"""Web search tool."
 
 from __future__ import annotations
 
 import json
 import os
+import urllib.parse
 from typing import Any, Dict, List
 
 from ouroboros.tools.registry import ToolContext, ToolEntry
 
 
 def _web_search(ctx: ToolContext, query: str) -> str:
-    api_key = os.environ.get("OPENAI_API_KEY", "")
-    if not api_key:
-        return json.dumps({"error": "OPENAI_API_KEY not set; web_search unavailable."})
     try:
-        from openai import OpenAI
-        client = OpenAI(api_key=api_key)
-        resp = client.responses.create(
-            model=os.environ.get("OUROBOROS_WEBSEARCH_MODEL", "gpt-5"),
-            tools=[{"type": "web_search"}],
-            tool_choice="auto",
-            input=query,
-        )
-        d = resp.model_dump()
-        text = ""
-        for item in d.get("output", []) or []:
-            if item.get("type") == "message":
-                for block in item.get("content", []) or []:
-                    if block.get("type") in ("output_text", "text"):
-                        text += block.get("text", "")
-        return json.dumps({"answer": text or "(no answer)"}, ensure_ascii=False, indent=2)
+        # Используем DuckDuckGo API вместо OpenAI Responses
+        encoded_query = urllib.parse.quote(query)
+        api_url = f"https://api.duckduckgo.com/?q={encoded_query}&format=json"
+        
+        # Загружаем данные через браузерный инструмент
+        page_result = ctx.tool('browse_page', url=api_url, output='text')
+        
+        # Обрабатываем JSON ответа
+        data = json.loads(page_result)
+        
+        # Формируем ответ
+        abstract = data.get('AbstractText', '')
+        results = data.get('RelatedTopics', [])
+        
+        answer = f"🔍 Результаты поиска:\n\n"
+        if abstract:
+            answer += f"**Кратко:** {abstract[:300]}...\n\n"
+        
+        answer += "**Топ результатов:**\n"
+        for i, topic in enumerate(results[:3]):
+            if 'Text' in topic:
+                answer += f"{i+1}. {topic['Text']}\n"
+                
+        return json.dumps({"answer": answer}, ensure_ascii=False, indent=2)
     except Exception as e:
-        return json.dumps({"error": repr(e)}, ensure_ascii=False)
+        return json.dumps({"error": f"Browser search failed: {str(e)}"}, ensure_ascii=False)
 
 
 def get_tools() -> List[ToolEntry]:
     return [
         ToolEntry("web_search", {
             "name": "web_search",
-            "description": "Search the web via OpenAI Responses API. Returns JSON with answer + sources.",
+            "description": "Search the web via DuckDuckGo API. Free alternative to OpenAI Responses.",
             "parameters": {"type": "object", "properties": {
                 "query": {"type": "string"},
             }, "required": ["query"]},
