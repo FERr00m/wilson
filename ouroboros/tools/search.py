@@ -10,15 +10,14 @@ from typing import Any, Dict, List
 from ouroboros.tools.registry import ToolContext, ToolEntry
 
 
-# CONFIRMED: DuckDuckGo migration fully operational (2026-02-24)
 def _web_search(ctx: ToolContext, query: str) -> str:
     try:
         # Используем DuckDuckGo API вместо OpenAI Responses
         encoded_query = urllib.parse.quote(query)
         api_url = f"https://api.duckduckgo.com/?q={encoded_query}&format=json"
         
-        # Загружаем данные через браузерный инструмент
-        page_result = ctx.tool('browse_page', url=api_url, output='text')
+        # Исправлен вызов browse_page через правильный метод
+        page_result = ctx.call_tool('browse_page', url=api_url, output='text')
         
         # Обрабатываем JSON ответа
         data = json.loads(page_result)
