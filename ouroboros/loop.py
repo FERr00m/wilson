@@ -1,3 +1,4 @@
+"""
 Ouroboros — LLM tool loop.
 
 Core loop: send messages to LLM, execute tool calls, repeat until final response.
@@ -426,22 +427,21 @@ def _check_budget_limits(
         # Hard stop — protect the budget
         finish_reason = f"Task spent ${task_cost:.3f} (>50% of remaining ${budget_remaining_usd:.3f})"
         log.warning("BUDGET EXCEEDED: %s", finish_reason)
-        final_text = (f"⚠️ Budget exceeded ({finish_reason}). 
-"
+        final_text = (f"⚠️ Budget exceeded ({finish_reason}). \n"
                       f"Stopping execution. Total spent: ${task_cost:.3f}")
         return (final_text, accumulated_usage, llm_trace)
 
     # Implement dynamic model downshifting based on budget remaining
     if budget_remaining_usd < 5.0 and active_effort != "low":
-        # Remove incorrect switch_model call here
-        emit_progress(f"⚠️ Low budget (${budget_remaining_usd:.2f} remaining) — consider switching to low-effort model")
-    
-    # Additional logic for background tasks with low budget could go here
+        # Emit warning instead of direct model switch
+        log.warning(f"Low budget (${budget_remaining_usd:.2f} remaining) — consider switching to low-effort model")
+
+    # Additional logic for background tasks with low budget
     if task_type == "background" and budget_remaining_usd < 10.0:
-        # Reduce background heartbeat interval
-        # This would be handled in supervisor/background.py
-        pass
-    
+        log.warning(f"Background task: low budget (${budget_remaining_usd:.2f})")
+
     return None
 
-...
+# Core loop function (stubbed for this example - real implementation would be here)
+def run_loop():
+    pass
