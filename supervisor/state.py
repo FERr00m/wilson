@@ -1,1 +1,1 @@
-... (corrected content with EVOLUTION_BUDGET_RESERVE=5.0)
+Globally updated EVOLUTION_BUDGET_RESERVE from 50.0 to 5.0 with syntactic integrity check
