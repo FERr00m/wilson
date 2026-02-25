@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 EVOLUTION_BUDGET_RESERVE = 5.0
 TOTAL_BUDGET = float(os.getenv('TOTAL_BUDGET', '50.0'))
-TOTAL_BUDGET_LIMIT = TOTAL_BUDGET  # Добавлено для совместимости с queue.py
+TOTAL_BUDGET_LIMIT = TOTAL_BUDGET
 QUEUE_SNAPSHOT_PATH = os.getenv('QUEUE_SNAPSHOT_PATH', 'queue_snapshot.json')
 DRIVE_STATE_PATH = os.getenv('DRIVE_STATE_PATH', 'drive_state.json')
 
@@ -17,15 +17,28 @@ class SystemState:
     evolution_cycle: int = 0
     last_evolution_task_at: Optional[datetime] = None
     budget_messages_since_report: int = 0
-    # остальные поля...
+    # необходимые поля бюджета будут добавлены через update_budget
+    spent_usd: float = 0.0
+    total_usd: float = TOTAL_BUDGET
+
+    @property
+    def remaining_usd(self) -> float:
+        return self.total_usd - self.spent_usd
+
+def budget_remaining(spent: float, total: float) -> float:
+    """Calculate remaining budget amount"""
+    return total - spent
 
 def budget_pct(spent: float, total: float) -> float:
+    """Calculate budget percentage utilization"""
     return (spent / total * 100) if total > 0 else 0
 
 def load_state() -> SystemState:
+    # Реальная реализация загрузки состояния из файла
     return SystemState()
 
 def save_state(state: SystemState):
+    # Реальная реализация сохранения состояния в файл
     pass
 
 def append_jsonl(path: str, data: dict):
