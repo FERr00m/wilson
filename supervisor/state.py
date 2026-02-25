@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 EVOLUTION_BUDGET_RESERVE = 5.0
 TOTAL_BUDGET = float(os.getenv('TOTAL_BUDGET', '50.0'))
+TOTAL_BUDGET_LIMIT = TOTAL_BUDGET  # Добавлено для совместимости с queue.py
 QUEUE_SNAPSHOT_PATH = os.getenv('QUEUE_SNAPSHOT_PATH', 'queue_snapshot.json')
 DRIVE_STATE_PATH = os.getenv('DRIVE_STATE_PATH', 'drive_state.json')
 
@@ -19,7 +20,6 @@ class SystemState:
     # остальные поля...
 
 def budget_pct(spent: float, total: float) -> float:
-    """Calculate budget percentage utilization"""
     return (spent / total * 100) if total > 0 else 0
 
 def load_state() -> SystemState:
