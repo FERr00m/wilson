@@ -13,17 +13,20 @@ class SystemState:
     evolution_consecutive_failures: int = 0
     evolution_cycle: int = 0
     last_evolution_task_at: Optional[datetime] = None
-    # ... остальные поля
+    # остальные поля...
 
 def load_state() -> SystemState:
-    # Реализация загрузки состояния
     return SystemState()
 
 def save_state(state: SystemState):
-    # Реализация сохранения состояния
     pass
 
 def append_jsonl(path: str, data: dict):
-    """Append data as JSON line to file"""
     with open(path, 'a') as f:
         f.write(json.dumps(data) + '\n')
+
+def atomic_write_text(path: str, content: str):
+    temp_path = f"{path}.tmp"
+    with open(temp_path, 'w') as f:
+        f.write(content)
+    os.replace(temp_path, path)
