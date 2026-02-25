@@ -16,7 +16,11 @@ class SystemState:
     evolution_cycle: int = 0
     last_evolution_task_at: Optional[datetime] = None
     budget_messages_since_report: int = 0
-    # ... остальные поля
+    # остальные поля...
+
+def budget_pct(spent: float, total: float) -> float:
+    """Calculate budget percentage utilization"""
+    return (spent / total * 100) if total > 0 else 0
 
 def load_state() -> SystemState:
     return SystemState()
