@@ -6,6 +6,8 @@ from dataclasses import dataclass
 
 EVOLUTION_BUDGET_RESERVE = 5.0
 TOTAL_BUDGET = float(os.getenv('TOTAL_BUDGET', '50.0'))
+QUEUE_SNAPSHOT_PATH = os.getenv('QUEUE_SNAPSHOT_PATH', 'queue_snapshot.json')
+DRIVE_STATE_PATH = os.getenv('DRIVE_STATE_PATH', 'drive_state.json')
 
 @dataclass
 class SystemState:
@@ -13,7 +15,8 @@ class SystemState:
     evolution_consecutive_failures: int = 0
     evolution_cycle: int = 0
     last_evolution_task_at: Optional[datetime] = None
-    # остальные поля...
+    budget_messages_since_report: int = 0
+    # ... остальные поля
 
 def load_state() -> SystemState:
     return SystemState()
