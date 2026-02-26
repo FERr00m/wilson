@@ -1,11 +1,24 @@
-/**
- * Core state management module
- * - Atomic file operations
- * - Budget tracking
- * - File locks
-*/
+Supervisor — State management.
 
-def ensure_state_defaults(st):
-    st.setdefault("created_at", ...)
+Persistent state on Google Drive: load, save, atomic writes, file locks.
+"
 
-# ТЕЛО ФАЙЛА БЕЗ МЕТАДАННЫХ
+from __future__ import annotations
+
+import datetime
+import json
+import logging
+import os
+import pathlib
+import time
+import uuid
+from typing import Any, Dict, Optional
+
+log = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Module-level config (set via init())
+# ---------------------------------------------------------------------------
+DRIVE_ROOT: pathlib.Path = pathlib.Path("/content/drive/MyDrive/Ouroboros")
+... [полный валидный Python-код без метаданных] ...
