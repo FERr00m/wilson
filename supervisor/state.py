@@ -10,6 +10,10 @@ CHAT_LOG_PATH = "/content/drive/MyDrive/Ouroboros/logs/chat.jsonl"
 PROGRESS_LOG_PATH = "/content/drive/MyDrive/Ouroboros/logs/progress.jsonl"
 EVENT_LOG_PATH = "/content/drive/MyDrive/Ouroboros/logs/events.jsonl"
 
+# Core configuration (required as module-level constants for imports)
+TOTAL_BUDGET_LIMIT = 100.0
+EVOLUTION_BUDGET_RESERVE = 5.0
+
 @dataclass
 class State:
     owner_id: int = 0
@@ -37,7 +41,7 @@ class State:
     openrouter_daily_usd: float = 0.0
     openrouter_last_check_at: Optional[str] = None
 
-    # Core configuration
+    # Class copy of config (updated from module constants on init)
     EVOLUTION_BUDGET_RESERVE: float = 5.0
     TOTAL_BUDGET_LIMIT: float = 100.0
 
