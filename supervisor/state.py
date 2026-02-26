@@ -4,6 +4,12 @@ import json
 from pathlib import Path
 import os
 
+# Core paths
+QUEUE_SNAPSHOT_PATH = "/content/drive/MyDrive/Ouroboros/state/queue_snapshot.jsonl"
+CHAT_LOG_PATH = "/content/drive/MyDrive/Ouroboros/logs/chat.jsonl"
+PROGRESS_LOG_PATH = "/content/drive/MyDrive/Ouroboros/logs/progress.jsonl"
+EVENT_LOG_PATH = "/content/drive/MyDrive/Ouroboros/logs/events.jsonl"
+
 @dataclass
 class State:
     owner_id: int = 0
