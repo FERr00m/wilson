@@ -55,8 +55,8 @@ class BackgroundConsciousness:
 
         self._llm = LLMClient()
         self._registry = self._build_registry()
-        self._running = False
-        self._paused = False
+        self._running_event = threading.Event()
+        self._paused_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
         self._wakeup_event = threading.Event()
@@ -73,6 +73,17 @@ class BackgroundConsciousness:
     # -------------------------------------------------------------------
     # Lifecycle
     # -------------------------------------------------------------------
+
+    @property
+    def _running(self) -> bool:
+        return self._running_event.is_set()
+
+    @_running.setter
+    def _running(self, value: bool) -> None:
+        if value:
+            self._running_event.set()
+        else:
+            self._running_event.clear()
 
     @property
     def is_running(self) -> bool:
@@ -112,6 +123,17 @@ class BackgroundConsciousness:
             self._deferred_events.clear()
         self._paused = False
         self._wakeup_event.set()
+
+    @property
+    def _paused(self) -> bool:
+        return self._paused_event.is_set()
+
+    @_paused.setter
+    def _paused(self, value: bool) -> None:
+        if value:
+            self._paused_event.set()
+        else:
+            self._paused_event.clear()
 
     def inject_observation(self, text: str) -> None:
         """Push an event the consciousness should notice."""

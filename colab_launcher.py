@@ -6,7 +6,7 @@
 
 import logging
 import os, sys, json, time, uuid, pathlib, subprocess, datetime, threading, queue as _queue_mod
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional
 
 log = logging.getLogger(__name__)
 
@@ -44,107 +44,38 @@ def ensure_claude_code_cli() -> bool:
 # 0.1) provide apply_patch shim
 # ----------------------------
 from ouroboros.apply_patch import install as install_apply_patch
-from ouroboros.llm import DEFAULT_LIGHT_MODEL
 install_apply_patch()
 
 # ----------------------------
 # 1) Secrets + runtime config
 # ----------------------------
-from google.colab import userdata  # type: ignore
 from google.colab import drive  # type: ignore
+from supervisor.config_loader import load_config, get_secret
 
-_LEGACY_CFG_WARNED: Set[str] = set()
+CONFIG = load_config()  # loads, validates, and exports all vars to os.environ
 
-def _userdata_get(name: str) -> Optional[str]:
-    try:
-        return userdata.get(name)
-    except Exception:
-        return None
-
-def get_secret(name: str, default: Optional[str] = None, required: bool = False) -> Optional[str]:
-    v = _userdata_get(name)
-    if v is None or str(v).strip() == "":
-        v = os.environ.get(name, default)
-    if required:
-        assert v is not None and str(v).strip() != "", f"Missing required secret: {name}"
-    return v
-
-def get_cfg(name: str, default: Optional[str] = None, allow_legacy_secret: bool = False) -> Optional[str]:
-    v = os.environ.get(name)
-    if v is not None and str(v).strip() != "":
-        return v
-    if allow_legacy_secret:
-        legacy = _userdata_get(name)
-        if legacy is not None and str(legacy).strip() != "":
-            if name not in _LEGACY_CFG_WARNED:
-                print(f"[cfg] DEPRECATED: move {name} from Colab Secrets to config cell/env.")
-                _LEGACY_CFG_WARNED.add(name)
-            return legacy
-    return default
-
-
-def _parse_int_cfg(raw: Optional[str], default: int, minimum: int = 0) -> int:
-    try:
-        val = int(str(raw))
-    except Exception:
-        val = default
-    return max(minimum, val)
-
-OPENROUTER_API_KEY = get_secret("OPENROUTER_API_KEY", required=True)
-TELEGRAM_BOT_TOKEN = get_secret("TELEGRAM_BOT_TOKEN", required=True)
-TOTAL_BUDGET_DEFAULT = get_secret("TOTAL_BUDGET", required=True)
-GITHUB_TOKEN = get_secret("GITHUB_TOKEN", required=True)
-
-# Robust TOTAL_BUDGET parsing — handles \r\n, spaces, and other junk from Colab Secrets
-# Example: user enters "8 800" → Colab stores as "8\r\n800" → we need 8800
-try:
-    import re
-    _raw_budget = str(TOTAL_BUDGET_DEFAULT or "")
-    _clean_budget = re.sub(r'[^0-9.\-]', '', _raw_budget)  # keep only digits, dot, minus
-    TOTAL_BUDGET_LIMIT = float(_clean_budget) if _clean_budget else 0.0
-    if _raw_budget.strip() != _clean_budget:
-        log.warning(f"TOTAL_BUDGET cleaned: {_raw_budget!r} → {TOTAL_BUDGET_LIMIT}")
-except Exception as e:
-    log.warning(f"Failed to parse TOTAL_BUDGET ({TOTAL_BUDGET_DEFAULT!r}): {e}")
-    TOTAL_BUDGET_LIMIT = 0.0
-
+# Optional secrets not managed by OuroborosConfig
 OPENAI_API_KEY = get_secret("OPENAI_API_KEY", default="")
 ANTHROPIC_API_KEY = get_secret("ANTHROPIC_API_KEY", default="")
-GITHUB_USER = get_cfg("GITHUB_USER", default=None, allow_legacy_secret=True)
-GITHUB_REPO = get_cfg("GITHUB_REPO", default=None, allow_legacy_secret=True)
-assert GITHUB_USER and str(GITHUB_USER).strip(), "GITHUB_USER not set. Add it to your config cell (see README)."
-assert GITHUB_REPO and str(GITHUB_REPO).strip(), "GITHUB_REPO not set. Add it to your config cell (see README)."
-MAX_WORKERS = int(get_cfg("OUROBOROS_MAX_WORKERS", default="5", allow_legacy_secret=True) or "5")
-MODEL_MAIN = get_cfg("OUROBOROS_MODEL", default="anthropic/claude-sonnet-4.6", allow_legacy_secret=True)
-MODEL_CODE = get_cfg("OUROBOROS_MODEL_CODE", default="anthropic/claude-sonnet-4.6", allow_legacy_secret=True)
-MODEL_LIGHT = get_cfg("OUROBOROS_MODEL_LIGHT", default=DEFAULT_LIGHT_MODEL, allow_legacy_secret=True)
-
-BUDGET_REPORT_EVERY_MESSAGES = 10
-SOFT_TIMEOUT_SEC = max(60, int(get_cfg("OUROBOROS_SOFT_TIMEOUT_SEC", default="600", allow_legacy_secret=True) or "600"))
-HARD_TIMEOUT_SEC = max(120, int(get_cfg("OUROBOROS_HARD_TIMEOUT_SEC", default="1800", allow_legacy_secret=True) or "1800"))
-DIAG_HEARTBEAT_SEC = _parse_int_cfg(
-    get_cfg("OUROBOROS_DIAG_HEARTBEAT_SEC", default="30", allow_legacy_secret=True),
-    default=30,
-    minimum=0,
-)
-DIAG_SLOW_CYCLE_SEC = _parse_int_cfg(
-    get_cfg("OUROBOROS_DIAG_SLOW_CYCLE_SEC", default="20", allow_legacy_secret=True),
-    default=20,
-    minimum=0,
-)
-
-os.environ["OPENROUTER_API_KEY"] = str(OPENROUTER_API_KEY)
 os.environ["OPENAI_API_KEY"] = str(OPENAI_API_KEY or "")
 os.environ["ANTHROPIC_API_KEY"] = str(ANTHROPIC_API_KEY or "")
-os.environ["GITHUB_USER"] = str(GITHUB_USER)
-os.environ["GITHUB_REPO"] = str(GITHUB_REPO)
-os.environ["OUROBOROS_MODEL"] = str(MODEL_MAIN or "anthropic/claude-sonnet-4.6")
-os.environ["OUROBOROS_MODEL_CODE"] = str(MODEL_CODE or "anthropic/claude-sonnet-4.6")
-if MODEL_LIGHT:
-    os.environ["OUROBOROS_MODEL_LIGHT"] = str(MODEL_LIGHT)
-os.environ["OUROBOROS_DIAG_HEARTBEAT_SEC"] = str(DIAG_HEARTBEAT_SEC)
-os.environ["OUROBOROS_DIAG_SLOW_CYCLE_SEC"] = str(DIAG_SLOW_CYCLE_SEC)
-os.environ["TELEGRAM_BOT_TOKEN"] = str(TELEGRAM_BOT_TOKEN)
+
+# Module-level aliases for convenience throughout this file
+OPENROUTER_API_KEY = CONFIG.openrouter_api_key
+TELEGRAM_BOT_TOKEN = CONFIG.telegram_bot_token
+GITHUB_TOKEN = CONFIG.github_token
+GITHUB_USER = CONFIG.github_user
+GITHUB_REPO = CONFIG.github_repo
+TOTAL_BUDGET_LIMIT = CONFIG.total_budget
+MAX_WORKERS = CONFIG.max_workers
+MODEL_MAIN = CONFIG.model_main
+MODEL_CODE = CONFIG.model_code
+MODEL_LIGHT = CONFIG.model_light
+SOFT_TIMEOUT_SEC = CONFIG.soft_timeout_sec
+HARD_TIMEOUT_SEC = CONFIG.hard_timeout_sec
+DIAG_HEARTBEAT_SEC = CONFIG.diag_heartbeat_sec
+DIAG_SLOW_CYCLE_SEC = CONFIG.diag_slow_cycle_sec
+BUDGET_REPORT_EVERY_MESSAGES = 10
 
 if str(ANTHROPIC_API_KEY or "").strip():
     ensure_claude_code_cli()
@@ -184,8 +115,8 @@ if not CHAT_LOG_PATH.exists():
 # ----------------------------
 # 3) Git constants
 # ----------------------------
-BRANCH_DEV = "ouroboros"
-BRANCH_STABLE = "ouroboros-stable"
+BRANCH_DEV = CONFIG.branch_dev
+BRANCH_STABLE = CONFIG.branch_stable
 REMOTE_URL = f"https://{GITHUB_TOKEN}:x-oauth-basic@github.com/{GITHUB_USER}/{GITHUB_REPO}.git"
 
 # ----------------------------
@@ -238,6 +169,10 @@ workers_init(
 )
 
 from supervisor.events import dispatch_event
+from supervisor.main_loop import (
+    handle_supervisor_command as main_loop_handle_supervisor_command,
+    safe_qsize as main_loop_safe_qsize,
+)
 
 # ----------------------------
 # 5) Bootstrap repo
@@ -353,15 +288,15 @@ def reset_chat_agent():
 # ----------------------------
 import types
 _event_ctx = types.SimpleNamespace(
-    DRIVE_ROOT=DRIVE_ROOT,
-    REPO_DIR=REPO_DIR,
-    BRANCH_DEV=BRANCH_DEV,
-    BRANCH_STABLE=BRANCH_STABLE,
-    TG=TG,
-    WORKERS=WORKERS,
-    PENDING=PENDING,
-    RUNNING=RUNNING,
-    MAX_WORKERS=MAX_WORKERS,
+    drive_root=DRIVE_ROOT,
+    repo_dir=REPO_DIR,
+    branch_dev=BRANCH_DEV,
+    branch_stable=BRANCH_STABLE,
+    tg=TG,
+    workers=WORKERS,
+    pending=PENDING,
+    running=RUNNING,
+    pending_ref=PENDING,
     send_with_budget=send_with_budget,
     load_state=load_state,
     save_state=save_state,
@@ -376,87 +311,17 @@ _event_ctx = types.SimpleNamespace(
     spawn_workers=spawn_workers,
     sort_pending=sort_pending,
     consciousness=_consciousness,
+    status_text=lambda: status_text(WORKERS, PENDING, RUNNING, SOFT_TIMEOUT_SEC, HARD_TIMEOUT_SEC),
+    exec_restart=lambda: os.execv(sys.executable, [sys.executable, __file__]),
 )
 
 
 def _safe_qsize(q: Any) -> int:
-    try:
-        return int(q.qsize())
-    except Exception:
-        return -1
+    return main_loop_safe_qsize(q)
 
 
 def _handle_supervisor_command(text: str, chat_id: int, tg_offset: int = 0):
-    """Handle supervisor slash-commands.
-
-    Returns:
-        True  — terminal command fully handled (caller should `continue`)
-        str   — dual-path note to prepend (caller falls through to LLM)
-        ""    — not a recognized command (falsy, caller falls through)
-    """
-    lowered = text.strip().lower()
-
-    if lowered.startswith("/panic"):
-        send_with_budget(chat_id, "🛑 PANIC: stopping everything now.")
-        kill_workers()
-        st2 = load_state()
-        st2["tg_offset"] = tg_offset
-        save_state(st2)
-        raise SystemExit("PANIC")
-
-    if lowered.startswith("/restart"):
-        st2 = load_state()
-        st2["session_id"] = uuid.uuid4().hex
-        st2["tg_offset"] = tg_offset
-        save_state(st2)
-        send_with_budget(chat_id, "♻️ Restarting (soft).")
-        ok, msg = safe_restart(reason="owner_restart", unsynced_policy="rescue_and_reset")
-        if not ok:
-            send_with_budget(chat_id, f"⚠️ Restart cancelled: {msg}")
-            return True
-        kill_workers()
-        os.execv(sys.executable, [sys.executable, __file__])
-
-    # Dual-path commands: supervisor handles + LLM sees a note
-    if lowered.startswith("/status"):
-        status = status_text(WORKERS, PENDING, RUNNING, SOFT_TIMEOUT_SEC, HARD_TIMEOUT_SEC)
-        send_with_budget(chat_id, status, force_budget=True)
-        return "[Supervisor handled /status — status text already sent to chat]\n"
-
-    if lowered.startswith("/review"):
-        queue_review_task(reason="owner:/review", force=True)
-        return "[Supervisor handled /review — review task queued]\n"
-
-    if lowered.startswith("/evolve"):
-        parts = lowered.split()
-        action = parts[1] if len(parts) > 1 else "on"
-        turn_on = action not in ("off", "stop", "0")
-        st2 = load_state()
-        st2["evolution_mode_enabled"] = bool(turn_on)
-        save_state(st2)
-        if not turn_on:
-            PENDING[:] = [t for t in PENDING if str(t.get("type")) != "evolution"]
-            sort_pending()
-            persist_queue_snapshot(reason="evolve_off")
-        state_str = "ON" if turn_on else "OFF"
-        send_with_budget(chat_id, f"🧬 Evolution: {state_str}")
-        return f"[Supervisor handled /evolve — evolution toggled {state_str}]\n"
-
-    if lowered.startswith("/bg"):
-        parts = lowered.split()
-        action = parts[1] if len(parts) > 1 else "status"
-        if action in ("start", "on", "1"):
-            result = _consciousness.start()
-            send_with_budget(chat_id, f"🧠 {result}")
-        elif action in ("stop", "off", "0"):
-            result = _consciousness.stop()
-            send_with_budget(chat_id, f"🧠 {result}")
-        else:
-            bg_status = "running" if _consciousness.is_running else "stopped"
-            send_with_budget(chat_id, f"🧠 Background consciousness: {bg_status}")
-        return f"[Supervisor handled /bg {action}]\n"
-
-    return ""
+    return main_loop_handle_supervisor_command(text, chat_id, tg_offset, _event_ctx)
 
 
 offset = int(load_state().get("tg_offset") or 0)

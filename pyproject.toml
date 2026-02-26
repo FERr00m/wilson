@@ -3,6 +3,18 @@ name = "ouroboros"
 version = "6.3.2"
 description = "Self-creating agent"
 requires-python = ">=3.10"
+dependencies = [
+    "openai>=1.0.0",
+    "requests",
+    "playwright",
+    "playwright-stealth",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "ruff",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
