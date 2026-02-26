@@ -1,2 +1,1 @@
-EVOLUTION_BUDGET_RESERVE = 50.0
-TOTAL_BUDGET_LIMIT = 50.0
+[содержимое файла] + метаданные
