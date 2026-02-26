@@ -68,44 +68,6 @@ class LLMUsage:
         )
 
 
-@dataclass
-class WorkerEvent:
-    type: str
-    ts: str = ""
-    task_id: str = ""
-    task_type: str = ""
-    chat_id: int = 0
-    text: str = ""
-    format: str = ""
-    worker_id: int = -1
-    cost_usd: float = 0.0
-    total_rounds: int = 0
-    prompt_tokens: int = 0
-    completion_tokens: int = 0
-    usage: Optional[Dict[str, Any]] = None
-
-    def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "WorkerEvent":
-        return cls(
-            type=str(data.get("type") or ""),
-            ts=str(data.get("ts") or ""),
-            task_id=str(data.get("task_id") or ""),
-            task_type=str(data.get("task_type") or ""),
-            chat_id=int(data.get("chat_id") or 0),
-            text=str(data.get("text") or ""),
-            format=str(data.get("format") or ""),
-            worker_id=int(data.get("worker_id") or -1),
-            cost_usd=float(data.get("cost_usd") or 0.0),
-            total_rounds=int(data.get("total_rounds") or 0),
-            prompt_tokens=int(data.get("prompt_tokens") or 0),
-            completion_tokens=int(data.get("completion_tokens") or 0),
-            usage=data.get("usage") if isinstance(data.get("usage"), dict) else None,
-        )
-
-
 # ---------------------------------------------------------------------------
 # Typed worker/supervisor events
 # ---------------------------------------------------------------------------

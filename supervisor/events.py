@@ -45,35 +45,35 @@ EventHandler = Callable[[BaseWorkerEvent, SupervisorEventContext], None]
 
 
 def _ctx_drive_root(ctx: SupervisorEventContext) -> pathlib.Path:
-    return cast(pathlib.Path, getattr(ctx, "drive_root", getattr(ctx, "DRIVE_ROOT")))
+    return ctx.drive_root
 
 
 def _ctx_repo_dir(ctx: SupervisorEventContext) -> pathlib.Path:
-    return cast(pathlib.Path, getattr(ctx, "repo_dir", getattr(ctx, "REPO_DIR")))
+    return ctx.repo_dir
 
 
 def _ctx_branch_dev(ctx: SupervisorEventContext) -> str:
-    return str(getattr(ctx, "branch_dev", getattr(ctx, "BRANCH_DEV")))
+    return ctx.branch_dev
 
 
 def _ctx_branch_stable(ctx: SupervisorEventContext) -> str:
-    return str(getattr(ctx, "branch_stable", getattr(ctx, "BRANCH_STABLE")))
+    return ctx.branch_stable
 
 
 def _ctx_tg(ctx: SupervisorEventContext) -> Any:
-    return getattr(ctx, "tg", getattr(ctx, "TG"))
+    return ctx.tg
 
 
 def _ctx_workers(ctx: SupervisorEventContext) -> Dict[int, Any]:
-    return cast(Dict[int, Any], getattr(ctx, "workers", getattr(ctx, "WORKERS")))
+    return cast(Dict[int, Any], ctx.workers)
 
 
 def _ctx_pending(ctx: SupervisorEventContext) -> list[dict]:
-    return cast(list[dict], getattr(ctx, "pending", getattr(ctx, "PENDING")))
+    return cast(list[dict], ctx.pending)
 
 
 def _ctx_running(ctx: SupervisorEventContext) -> dict[str, dict]:
-    return cast(dict[str, dict], getattr(ctx, "running", getattr(ctx, "RUNNING")))
+    return cast(dict[str, dict], ctx.running)
 
 
 def _handle_llm_usage(evt: LlmUsageEvent, ctx: SupervisorEventContext) -> None:
