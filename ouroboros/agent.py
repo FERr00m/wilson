@@ -32,7 +32,6 @@ from ouroboros.tools.registry import ToolContext
 from ouroboros.memory import Memory
 from ouroboros.context import build_llm_messages
 from ouroboros.loop import run_llm_loop
-from ouroboros.types import TaskDict
 
 
 # ---------------------------------------------------------------------------
@@ -75,7 +74,7 @@ class OuroborosAgent:
 
         # Message injection: owner can send messages while agent is busy
         self._incoming_messages: queue.Queue = queue.Queue()
-        self._busy_event = threading.Event()
+        self._busy = False
         self._last_progress_ts: float = 0.0
         self._task_started_ts: float = 0.0
 
@@ -85,17 +84,6 @@ class OuroborosAgent:
         self.memory = Memory(drive_root=env.drive_root, repo_dir=env.repo_dir)
 
         self._log_worker_boot_once()
-
-    @property
-    def _busy(self) -> bool:
-        return self._busy_event.is_set()
-
-    @_busy.setter
-    def _busy(self, value: bool) -> None:
-        if value:
-            self._busy_event.set()
-        else:
-            self._busy_event.clear()
 
     def inject_message(self, text: str) -> None:
         """Thread-safe: inject owner message into the active conversation."""
@@ -138,13 +126,16 @@ class OuroborosAgent:
                     'expected_sha': expected_sha, 'observed_sha': git_sha,
                 })
             except Exception:
-                log.warning("Failed to log restart verify event", exc_info=True)
+                log.debug("Failed to log restart verify event", exc_info=True)
+                pass
             try:
                 claim_path.unlink()
             except Exception:
-                log.warning("Failed to delete restart verify claim file", exc_info=True)
+                log.debug("Failed to delete restart verify claim file", exc_info=True)
+                pass
         except Exception:
-            log.warning("Restart verification failed", exc_info=True)
+            log.debug("Restart verification failed", exc_info=True)
+            pass
 
     def _check_uncommitted_changes(self) -> Tuple[dict, int]:
         """Check for uncommitted changes and attempt auto-rescue commit & push."""
@@ -336,11 +327,10 @@ class OuroborosAgent:
     # Main entry point
     # =====================================================================
 
-    def _prepare_task_context(self, task: TaskDict) -> Tuple[ToolContext, List[Dict[str, Any]], Dict[str, Any]]:
+    def _prepare_task_context(self, task: Dict[str, Any]) -> Tuple[ToolContext, List[Dict[str, Any]], Dict[str, Any]]:
         """Set up ToolContext, build messages, return (ctx, messages, cap_info)."""
-        task_data = task.to_dict()
         drive_logs = self.env.drive_path("logs")
-        sanitized_task = sanitize_task_for_event(task_data, drive_logs)
+        sanitized_task = sanitize_task_for_event(task, drive_logs)
         append_jsonl(drive_logs / "events.jsonl", {"ts": utc_now_iso(), "type": "task_received", "task": sanitized_task})
 
         # Set tool context for this task
@@ -352,8 +342,8 @@ class OuroborosAgent:
             current_chat_id=self._current_chat_id,
             current_task_type=self._current_task_type,
             emit_progress_fn=self._emit_progress,
-            task_depth=int(task.depth or 0),
-            is_direct_chat=bool(task._is_direct_chat),
+            task_depth=int(task.get("depth", 0)),
+            is_direct_chat=bool(task.get("_is_direct_chat")),
         )
         self.tools.set_context(ctx)
 
@@ -364,7 +354,7 @@ class OuroborosAgent:
         messages, cap_info = build_llm_messages(
             env=self.env,
             memory=self.memory,
-            task=task_data,
+            task=task,
             review_context_builder=self._build_review_context,
         )
 
@@ -372,7 +362,7 @@ class OuroborosAgent:
             try:
                 append_jsonl(drive_logs / "events.jsonl", {
                     "ts": utc_now_iso(), "type": "context_soft_cap_trim",
-                    "task_id": task.id, **cap_info,
+                    "task_id": task.get("id"), **cap_info,
                 })
             except Exception:
                 log.warning("Failed to log context soft cap trim event", exc_info=True)
@@ -394,22 +384,20 @@ class OuroborosAgent:
         return ctx, messages, cap_info
 
     def handle_task(self, task: Dict[str, Any]) -> List[Dict[str, Any]]:
-        task_typed = TaskDict.from_dict(task)
-        task_data = task_typed.to_dict()
         self._busy = True
         start_time = time.time()
         self._task_started_ts = start_time
         self._last_progress_ts = start_time
         self._pending_events = []
-        self._current_chat_id = int(task_typed.chat_id or 0) or None
-        self._current_task_type = str(task_typed.type or "")
+        self._current_chat_id = int(task.get("chat_id") or 0) or None
+        self._current_task_type = str(task.get("type") or "")
 
         drive_logs = self.env.drive_path("logs")
         heartbeat_stop = self._start_task_heartbeat_loop(str(task.get("id") or ""))
 
         try:
             # --- Prepare task context ---
-            ctx, messages, cap_info = self._prepare_task_context(task_typed)
+            ctx, messages, cap_info = self._prepare_task_context(task)
             budget_remaining = cap_info.get("budget_remaining")
 
             # --- LLM loop (delegated to loop.py) ---
@@ -417,7 +405,7 @@ class OuroborosAgent:
             llm_trace: Dict[str, Any] = {"assistant_notes": [], "tool_calls": []}
 
             # Set initial reasoning effort based on task type
-            task_type_str = str(task_typed.type or "").lower()
+            task_type_str = str(task.get("type") or "").lower()
             if task_type_str in ("evolution", "review"):
                 initial_effort = "high"
             else:
@@ -432,7 +420,7 @@ class OuroborosAgent:
                     emit_progress=self._emit_progress,
                     incoming_messages=self._incoming_messages,
                     task_type=task_type_str,
-                    task_id=str(task_typed.id or ""),
+                    task_id=str(task.get("id") or ""),
                     budget_remaining_usd=budget_remaining,
                     event_queue=self._event_queue,
                     initial_effort=initial_effort,
@@ -452,7 +440,7 @@ class OuroborosAgent:
                 text = "⚠️ Model returned an empty response. Try rephrasing your request."
 
             # Emit events for supervisor
-            self._emit_task_results(task_data, text, usage, llm_trace, start_time, drive_logs)
+            self._emit_task_results(task, text, usage, llm_trace, start_time, drive_logs)
             return list(self._pending_events)
 
         finally:
@@ -462,7 +450,8 @@ class OuroborosAgent:
                 from ouroboros.tools.browser import cleanup_browser
                 cleanup_browser(self.tools._ctx)
             except Exception:
-                log.warning("Failed to cleanup browser", exc_info=True)
+                log.debug("Failed to cleanup browser", exc_info=True)
+                pass
             while not self._incoming_messages.empty():
                 try:
                     self._incoming_messages.get_nowait()
