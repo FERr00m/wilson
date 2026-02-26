@@ -11,24 +11,80 @@ import datetime
 import json
 import logging
 import os
+import pathlib
 import sys
 import time
 import uuid
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Mapping, Optional, cast
+from ouroboros.types import (
+    BaseWorkerEvent,
+    CancelTaskEvent,
+    LlmUsageEvent,
+    OwnerMessageInjectedEvent,
+    PromoteToStableEvent,
+    RestartRequestEvent,
+    ReviewRequestEvent,
+    ScheduleTaskEvent,
+    SendMessageEvent,
+    SendPhotoEvent,
+    TaskDoneEvent,
+    TaskHeartbeatEvent,
+    TaskMetricsEvent,
+    ToggleConsciousnessEvent,
+    ToggleEvolutionEvent,
+    TypingStartEvent,
+)
+from supervisor.context import SupervisorEventContext
 
 # Lazy imports to avoid circular dependencies — everything comes through ctx
 
 log = logging.getLogger(__name__)
 
 
-def _handle_llm_usage(evt: Dict[str, Any], ctx: Any) -> None:
+EventHandler = Callable[[BaseWorkerEvent, SupervisorEventContext], None]
+
+
+def _ctx_drive_root(ctx: SupervisorEventContext) -> pathlib.Path:
+    return cast(pathlib.Path, getattr(ctx, "drive_root", getattr(ctx, "DRIVE_ROOT")))
+
+
+def _ctx_repo_dir(ctx: SupervisorEventContext) -> pathlib.Path:
+    return cast(pathlib.Path, getattr(ctx, "repo_dir", getattr(ctx, "REPO_DIR")))
+
+
+def _ctx_branch_dev(ctx: SupervisorEventContext) -> str:
+    return str(getattr(ctx, "branch_dev", getattr(ctx, "BRANCH_DEV")))
+
+
+def _ctx_branch_stable(ctx: SupervisorEventContext) -> str:
+    return str(getattr(ctx, "branch_stable", getattr(ctx, "BRANCH_STABLE")))
+
+
+def _ctx_tg(ctx: SupervisorEventContext) -> Any:
+    return getattr(ctx, "tg", getattr(ctx, "TG"))
+
+
+def _ctx_workers(ctx: SupervisorEventContext) -> Dict[int, Any]:
+    return cast(Dict[int, Any], getattr(ctx, "workers", getattr(ctx, "WORKERS")))
+
+
+def _ctx_pending(ctx: SupervisorEventContext) -> list[dict]:
+    return cast(list[dict], getattr(ctx, "pending", getattr(ctx, "PENDING")))
+
+
+def _ctx_running(ctx: SupervisorEventContext) -> dict[str, dict]:
+    return cast(dict[str, dict], getattr(ctx, "running", getattr(ctx, "RUNNING")))
+
+
+def _handle_llm_usage(evt: LlmUsageEvent, ctx: SupervisorEventContext) -> None:
     usage = evt.get("usage") or {}
-    ctx.update_budget_from_usage(usage)
+    if isinstance(usage, dict):
+        ctx.update_budget_from_usage(cast(Dict[str, object], usage))
 
     # Log to events.jsonl for audit trail
     from ouroboros.utils import utc_now_iso, append_jsonl
     try:
-        append_jsonl(ctx.DRIVE_ROOT / "logs" / "events.jsonl", {
+        append_jsonl(_ctx_drive_root(ctx) / "logs" / "events.jsonl", {
             "ts": evt.get("ts", utc_now_iso()),
             "type": "llm_usage",
             "task_id": evt.get("task_id", ""),
@@ -40,31 +96,30 @@ def _handle_llm_usage(evt: Dict[str, Any], ctx: Any) -> None:
         })
     except Exception:
         log.warning("Failed to log llm_usage event to events.jsonl", exc_info=True)
-        pass
 
 
-def _handle_task_heartbeat(evt: Dict[str, Any], ctx: Any) -> None:
+def _handle_task_heartbeat(evt: TaskHeartbeatEvent, ctx: SupervisorEventContext) -> None:
     task_id = str(evt.get("task_id") or "")
-    if task_id and task_id in ctx.RUNNING:
-        meta = ctx.RUNNING.get(task_id) or {}
+    running = _ctx_running(ctx)
+    if task_id and task_id in running:
+        meta = cast(Dict[str, object], running.get(task_id) or {})
         meta["last_heartbeat_at"] = time.time()
         phase = str(evt.get("phase") or "")
         if phase:
             meta["heartbeat_phase"] = phase
-        ctx.RUNNING[task_id] = meta
+        running[task_id] = meta
 
 
-def _handle_typing_start(evt: Dict[str, Any], ctx: Any) -> None:
+def _handle_typing_start(evt: TypingStartEvent, ctx: SupervisorEventContext) -> None:
     try:
         chat_id = int(evt.get("chat_id") or 0)
         if chat_id:
-            ctx.TG.send_chat_action(chat_id, "typing")
+            _ctx_tg(ctx).send_chat_action(chat_id, "typing")
     except Exception:
         log.debug("Failed to send typing action to chat", exc_info=True)
-        pass
 
 
-def _handle_send_message(evt: Dict[str, Any], ctx: Any) -> None:
+def _handle_send_message(evt: SendMessageEvent, ctx: SupervisorEventContext) -> None:
     try:
         log_text = evt.get("log_text")
         fmt = str(evt.get("format") or "")
@@ -78,7 +133,7 @@ def _handle_send_message(evt: Dict[str, Any], ctx: Any) -> None:
         )
     except Exception as e:
         ctx.append_jsonl(
-            ctx.DRIVE_ROOT / "logs" / "supervisor.jsonl",
+            _ctx_drive_root(ctx) / "logs" / "supervisor.jsonl",
             {
                 "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 "type": "send_message_event_error", "error": repr(e),
@@ -86,7 +141,7 @@ def _handle_send_message(evt: Dict[str, Any], ctx: Any) -> None:
         )
 
 
-def _handle_task_done(evt: Dict[str, Any], ctx: Any) -> None:
+def _handle_task_done(evt: TaskDoneEvent, ctx: SupervisorEventContext) -> None:
     task_id = evt.get("task_id")
     task_type = str(evt.get("task_type") or "")
     wid = evt.get("worker_id")
@@ -113,7 +168,7 @@ def _handle_task_done(evt: Dict[str, Any], ctx: Any) -> None:
             st["evolution_consecutive_failures"] = failures
             ctx.save_state(st)
             ctx.append_jsonl(
-                ctx.DRIVE_ROOT / "logs" / "supervisor.jsonl",
+                _ctx_drive_root(ctx) / "logs" / "supervisor.jsonl",
                 {
                     "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                     "type": "evolution_task_failure_tracked",
@@ -124,16 +179,18 @@ def _handle_task_done(evt: Dict[str, Any], ctx: Any) -> None:
                 },
             )
 
+    running = _ctx_running(ctx)
+    workers = _ctx_workers(ctx)
     if task_id:
-        ctx.RUNNING.pop(str(task_id), None)
-    if wid in ctx.WORKERS and ctx.WORKERS[wid].busy_task_id == task_id:
-        ctx.WORKERS[wid].busy_task_id = None
+        running.pop(str(task_id), None)
+    if wid in workers and workers[wid].busy_task_id == task_id:
+        workers[wid].busy_task_id = None
     ctx.persist_queue_snapshot(reason="task_done")
 
     # Store task result for subtask retrieval
     try:
         from pathlib import Path
-        results_dir = Path(ctx.DRIVE_ROOT) / "task_results"
+        results_dir = Path(_ctx_drive_root(ctx)) / "task_results"
         results_dir.mkdir(parents=True, exist_ok=True)
         # Only write if agent didn't already write (check if file exists)
         result_file = results_dir / f"{task_id}.json"
@@ -152,9 +209,9 @@ def _handle_task_done(evt: Dict[str, Any], ctx: Any) -> None:
         log.warning("Failed to store task result in events: %s", e)
 
 
-def _handle_task_metrics(evt: Dict[str, Any], ctx: Any) -> None:
+def _handle_task_metrics(evt: TaskMetricsEvent, ctx: SupervisorEventContext) -> None:
     ctx.append_jsonl(
-        ctx.DRIVE_ROOT / "logs" / "supervisor.jsonl",
+        _ctx_drive_root(ctx) / "logs" / "supervisor.jsonl",
         {
             "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "type": "task_metrics_event",
@@ -167,13 +224,13 @@ def _handle_task_metrics(evt: Dict[str, Any], ctx: Any) -> None:
     )
 
 
-def _handle_review_request(evt: Dict[str, Any], ctx: Any) -> None:
+def _handle_review_request(evt: ReviewRequestEvent, ctx: SupervisorEventContext) -> None:
     ctx.queue_review_task(
         reason=str(evt.get("reason") or "agent_review_request"), force=False
     )
 
 
-def _handle_restart_request(evt: Dict[str, Any], ctx: Any) -> None:
+def _handle_restart_request(evt: RestartRequestEvent, ctx: SupervisorEventContext) -> None:
     st = ctx.load_state()
     if st.get("owner_chat_id"):
         ctx.send_with_budget(
@@ -199,23 +256,26 @@ def _handle_restart_request(evt: Dict[str, Any], ctx: Any) -> None:
     os.execv(sys.executable, [sys.executable, launcher])
 
 
-def _handle_promote_to_stable(evt: Dict[str, Any], ctx: Any) -> None:
+def _handle_promote_to_stable(evt: PromoteToStableEvent, ctx: SupervisorEventContext) -> None:
     import subprocess as sp
     try:
-        sp.run(["git", "fetch", "origin"], cwd=str(ctx.REPO_DIR), check=True)
+        repo_dir = _ctx_repo_dir(ctx)
+        branch_dev = _ctx_branch_dev(ctx)
+        branch_stable = _ctx_branch_stable(ctx)
+        sp.run(["git", "fetch", "origin"], cwd=str(repo_dir), check=True)
         sp.run(
-            ["git", "push", "origin", f"{ctx.BRANCH_DEV}:{ctx.BRANCH_STABLE}"],
-            cwd=str(ctx.REPO_DIR), check=True,
+            ["git", "push", "origin", f"{branch_dev}:{branch_stable}"],
+            cwd=str(repo_dir), check=True,
         )
         new_sha = sp.run(
-            ["git", "rev-parse", f"origin/{ctx.BRANCH_STABLE}"],
-            cwd=str(ctx.REPO_DIR), capture_output=True, text=True, check=True,
+            ["git", "rev-parse", f"origin/{branch_stable}"],
+            cwd=str(repo_dir), capture_output=True, text=True, check=True,
         ).stdout.strip()
         st = ctx.load_state()
         if st.get("owner_chat_id"):
             ctx.send_with_budget(
                 int(st["owner_chat_id"]),
-                f"✅ Promoted: {ctx.BRANCH_DEV} → {ctx.BRANCH_STABLE} ({new_sha[:8]})",
+                f"✅ Promoted: {branch_dev} → {branch_stable} ({new_sha[:8]})",
             )
     except Exception as e:
         st = ctx.load_state()
@@ -226,7 +286,7 @@ def _handle_promote_to_stable(evt: Dict[str, Any], ctx: Any) -> None:
             )
 
 
-def _find_duplicate_task(desc: str, pending: list, running: dict) -> Optional[str]:
+def _find_duplicate_task(desc: str, pending: list[dict], running: dict[str, dict]) -> Optional[str]:
     """Check if a semantically similar task already exists using a light LLM call.
 
     Bible P3 (LLM-first): dedup decisions are cognitive judgments, not hardcoded
@@ -282,7 +342,7 @@ def _find_duplicate_task(desc: str, pending: list, running: dict) -> Optional[st
         return None
 
 
-def _handle_schedule_task(evt: Dict[str, Any], ctx: Any) -> None:
+def _handle_schedule_task(evt: ScheduleTaskEvent, ctx: SupervisorEventContext) -> None:
     st = ctx.load_state()
     owner_chat_id = st.get("owner_chat_id")
     desc = str(evt.get("description") or "").strip()
@@ -298,8 +358,7 @@ def _handle_schedule_task(evt: Dict[str, Any], ctx: Any) -> None:
 
     if owner_chat_id and desc:
         # --- Task deduplication (Bible P3: LLM-first, not hardcoded heuristics) ---
-        from supervisor.queue import PENDING, RUNNING
-        dup_id = _find_duplicate_task(desc, PENDING, RUNNING)
+        dup_id = _find_duplicate_task(desc, _ctx_pending(ctx), _ctx_running(ctx))
         if dup_id:
             log.info("Rejected duplicate task: new='%s' duplicates='%s'", desc[:100], dup_id)
             ctx.send_with_budget(int(owner_chat_id), f"⚠️ Task rejected: semantically similar to already active task {dup_id}")
@@ -318,7 +377,7 @@ def _handle_schedule_task(evt: Dict[str, Any], ctx: Any) -> None:
         ctx.persist_queue_snapshot(reason="schedule_task_event")
 
 
-def _handle_cancel_task(evt: Dict[str, Any], ctx: Any) -> None:
+def _handle_cancel_task(evt: CancelTaskEvent, ctx: SupervisorEventContext) -> None:
     task_id = str(evt.get("task_id") or "").strip()
     st = ctx.load_state()
     owner_chat_id = st.get("owner_chat_id")
@@ -330,14 +389,15 @@ def _handle_cancel_task(evt: Dict[str, Any], ctx: Any) -> None:
         )
 
 
-def _handle_toggle_evolution(evt: Dict[str, Any], ctx: Any) -> None:
+def _handle_toggle_evolution(evt: ToggleEvolutionEvent, ctx: SupervisorEventContext) -> None:
     """Toggle evolution mode from LLM tool call."""
     enabled = bool(evt.get("enabled"))
     st = ctx.load_state()
     st["evolution_mode_enabled"] = enabled
     ctx.save_state(st)
     if not enabled:
-        ctx.PENDING[:] = [t for t in ctx.PENDING if str(t.get("type")) != "evolution"]
+        pending = _ctx_pending(ctx)
+        pending[:] = [t for t in pending if str(t.get("type")) != "evolution"]
         ctx.sort_pending()
         ctx.persist_queue_snapshot(reason="evolve_off_via_tool")
     if st.get("owner_chat_id"):
@@ -345,7 +405,7 @@ def _handle_toggle_evolution(evt: Dict[str, Any], ctx: Any) -> None:
         ctx.send_with_budget(int(st["owner_chat_id"]), f"🧬 Evolution: {state_str} (via agent tool)")
 
 
-def _handle_toggle_consciousness(evt: Dict[str, Any], ctx: Any) -> None:
+def _handle_toggle_consciousness(evt: ToggleConsciousnessEvent, ctx: SupervisorEventContext) -> None:
     """Toggle background consciousness from LLM tool call."""
     action = str(evt.get("action") or "status")
     if action in ("start", "on"):
@@ -360,7 +420,7 @@ def _handle_toggle_consciousness(evt: Dict[str, Any], ctx: Any) -> None:
         ctx.send_with_budget(int(st["owner_chat_id"]), f"🧠 {result}")
 
 
-def _handle_send_photo(evt: Dict[str, Any], ctx: Any) -> None:
+def _handle_send_photo(evt: SendPhotoEvent, ctx: SupervisorEventContext) -> None:
     """Send a photo (base64 PNG) to a Telegram chat."""
     import base64 as b64mod
     try:
@@ -370,10 +430,10 @@ def _handle_send_photo(evt: Dict[str, Any], ctx: Any) -> None:
         if not chat_id or not image_b64:
             return
         photo_bytes = b64mod.b64decode(image_b64)
-        ok, err = ctx.TG.send_photo(chat_id, photo_bytes, caption=caption)
+        ok, err = _ctx_tg(ctx).send_photo(chat_id, photo_bytes, caption=caption)
         if not ok:
             ctx.append_jsonl(
-                ctx.DRIVE_ROOT / "logs" / "supervisor.jsonl",
+                _ctx_drive_root(ctx) / "logs" / "supervisor.jsonl",
                 {
                     "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                     "type": "send_photo_error",
@@ -382,7 +442,7 @@ def _handle_send_photo(evt: Dict[str, Any], ctx: Any) -> None:
             )
     except Exception as e:
         ctx.append_jsonl(
-            ctx.DRIVE_ROOT / "logs" / "supervisor.jsonl",
+            _ctx_drive_root(ctx) / "logs" / "supervisor.jsonl",
             {
                 "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 "type": "send_photo_event_error", "error": repr(e),
@@ -390,11 +450,11 @@ def _handle_send_photo(evt: Dict[str, Any], ctx: Any) -> None:
         )
 
 
-def _handle_owner_message_injected(evt: Dict[str, Any], ctx: Any) -> None:
+def _handle_owner_message_injected(evt: OwnerMessageInjectedEvent, ctx: SupervisorEventContext) -> None:
     """Log owner_message_injected to events.jsonl for health invariant #5 (duplicate processing)."""
     from ouroboros.utils import utc_now_iso
     try:
-        ctx.append_jsonl(ctx.DRIVE_ROOT / "logs" / "events.jsonl", {
+        ctx.append_jsonl(_ctx_drive_root(ctx) / "logs" / "events.jsonl", {
             "ts": evt.get("ts", utc_now_iso()),
             "type": "owner_message_injected",
             "task_id": evt.get("task_id", ""),
@@ -407,30 +467,30 @@ def _handle_owner_message_injected(evt: Dict[str, Any], ctx: Any) -> None:
 # ---------------------------------------------------------------------------
 # Dispatch table
 # ---------------------------------------------------------------------------
-EVENT_HANDLERS = {
-    "llm_usage": _handle_llm_usage,
-    "task_heartbeat": _handle_task_heartbeat,
-    "typing_start": _handle_typing_start,
-    "send_message": _handle_send_message,
-    "task_done": _handle_task_done,
-    "task_metrics": _handle_task_metrics,
-    "review_request": _handle_review_request,
-    "restart_request": _handle_restart_request,
-    "promote_to_stable": _handle_promote_to_stable,
-    "schedule_task": _handle_schedule_task,
-    "cancel_task": _handle_cancel_task,
-    "send_photo": _handle_send_photo,
-    "toggle_evolution": _handle_toggle_evolution,
-    "toggle_consciousness": _handle_toggle_consciousness,
-    "owner_message_injected": _handle_owner_message_injected,
+EVENT_HANDLERS: Dict[str, EventHandler] = {
+    "llm_usage": lambda evt, ctx: _handle_llm_usage(cast(LlmUsageEvent, evt), ctx),
+    "task_heartbeat": lambda evt, ctx: _handle_task_heartbeat(cast(TaskHeartbeatEvent, evt), ctx),
+    "typing_start": lambda evt, ctx: _handle_typing_start(cast(TypingStartEvent, evt), ctx),
+    "send_message": lambda evt, ctx: _handle_send_message(cast(SendMessageEvent, evt), ctx),
+    "task_done": lambda evt, ctx: _handle_task_done(cast(TaskDoneEvent, evt), ctx),
+    "task_metrics": lambda evt, ctx: _handle_task_metrics(cast(TaskMetricsEvent, evt), ctx),
+    "review_request": lambda evt, ctx: _handle_review_request(cast(ReviewRequestEvent, evt), ctx),
+    "restart_request": lambda evt, ctx: _handle_restart_request(cast(RestartRequestEvent, evt), ctx),
+    "promote_to_stable": lambda evt, ctx: _handle_promote_to_stable(cast(PromoteToStableEvent, evt), ctx),
+    "schedule_task": lambda evt, ctx: _handle_schedule_task(cast(ScheduleTaskEvent, evt), ctx),
+    "cancel_task": lambda evt, ctx: _handle_cancel_task(cast(CancelTaskEvent, evt), ctx),
+    "send_photo": lambda evt, ctx: _handle_send_photo(cast(SendPhotoEvent, evt), ctx),
+    "toggle_evolution": lambda evt, ctx: _handle_toggle_evolution(cast(ToggleEvolutionEvent, evt), ctx),
+    "toggle_consciousness": lambda evt, ctx: _handle_toggle_consciousness(cast(ToggleConsciousnessEvent, evt), ctx),
+    "owner_message_injected": lambda evt, ctx: _handle_owner_message_injected(cast(OwnerMessageInjectedEvent, evt), ctx),
 }
 
 
-def dispatch_event(evt: Dict[str, Any], ctx: Any) -> None:
+def dispatch_event(evt: Mapping[str, object], ctx: SupervisorEventContext) -> None:
     """Dispatch a single worker event to its handler."""
-    if not isinstance(evt, dict):
+    if not isinstance(evt, Mapping):
         ctx.append_jsonl(
-            ctx.DRIVE_ROOT / "logs" / "supervisor.jsonl",
+            _ctx_drive_root(ctx) / "logs" / "supervisor.jsonl",
             {
                 "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 "type": "invalid_worker_event",
@@ -440,10 +500,11 @@ def dispatch_event(evt: Dict[str, Any], ctx: Any) -> None:
         )
         return
 
-    event_type = str(evt.get("type") or "").strip()
+    payload = cast(BaseWorkerEvent, dict(evt))
+    event_type = str(payload.get("type") or "").strip()
     if not event_type:
         ctx.append_jsonl(
-            ctx.DRIVE_ROOT / "logs" / "supervisor.jsonl",
+            _ctx_drive_root(ctx) / "logs" / "supervisor.jsonl",
             {
                 "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 "type": "invalid_worker_event",
@@ -456,21 +517,21 @@ def dispatch_event(evt: Dict[str, Any], ctx: Any) -> None:
     handler = EVENT_HANDLERS.get(event_type)
     if handler is None:
         ctx.append_jsonl(
-            ctx.DRIVE_ROOT / "logs" / "supervisor.jsonl",
+            _ctx_drive_root(ctx) / "logs" / "supervisor.jsonl",
             {
                 "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 "type": "unknown_worker_event",
                 "event_type": event_type,
-                "event_repr": repr(evt)[:1000],
+                "event_repr": repr(dict(evt))[:1000],
             },
         )
         return
 
     try:
-        handler(evt, ctx)
+        handler(payload, ctx)
     except Exception as e:
         ctx.append_jsonl(
-            ctx.DRIVE_ROOT / "logs" / "supervisor.jsonl",
+            _ctx_drive_root(ctx) / "logs" / "supervisor.jsonl",
             {
                 "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 "type": "worker_event_handler_error",

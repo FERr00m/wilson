@@ -45,6 +45,7 @@ def ensure_claude_code_cli() -> bool:
 # ----------------------------
 from ouroboros.apply_patch import install as install_apply_patch
 from ouroboros.llm import DEFAULT_LIGHT_MODEL
+from supervisor.config_loader import load_config
 install_apply_patch()
 
 # ----------------------------
@@ -132,6 +133,18 @@ DIAG_SLOW_CYCLE_SEC = _parse_int_cfg(
     default=20,
     minimum=0,
 )
+
+# Typed config loader (single source of defaults and validation)
+CONFIG = load_config()
+MAX_WORKERS = int(CONFIG.max_workers)
+MODEL_MAIN = CONFIG.model_main
+MODEL_CODE = CONFIG.model_code
+MODEL_LIGHT = CONFIG.model_light
+SOFT_TIMEOUT_SEC = int(CONFIG.soft_timeout_sec)
+HARD_TIMEOUT_SEC = int(CONFIG.hard_timeout_sec)
+DIAG_HEARTBEAT_SEC = int(CONFIG.diag_heartbeat_sec)
+DIAG_SLOW_CYCLE_SEC = int(CONFIG.diag_slow_cycle_sec)
+TOTAL_BUDGET_LIMIT = float(CONFIG.total_budget)
 
 os.environ["OPENROUTER_API_KEY"] = str(OPENROUTER_API_KEY)
 os.environ["OPENAI_API_KEY"] = str(OPENAI_API_KEY or "")
@@ -238,6 +251,10 @@ workers_init(
 )
 
 from supervisor.events import dispatch_event
+from supervisor.main_loop import (
+    handle_supervisor_command as main_loop_handle_supervisor_command,
+    safe_qsize as main_loop_safe_qsize,
+)
 
 # ----------------------------
 # 5) Bootstrap repo
@@ -353,6 +370,17 @@ def reset_chat_agent():
 # ----------------------------
 import types
 _event_ctx = types.SimpleNamespace(
+    # snake_case canonical names
+    drive_root=DRIVE_ROOT,
+    repo_dir=REPO_DIR,
+    branch_dev=BRANCH_DEV,
+    branch_stable=BRANCH_STABLE,
+    tg=TG,
+    workers=WORKERS,
+    pending=PENDING,
+    running=RUNNING,
+    max_workers=MAX_WORKERS,
+    # legacy aliases (backward compatibility during migration)
     DRIVE_ROOT=DRIVE_ROOT,
     REPO_DIR=REPO_DIR,
     BRANCH_DEV=BRANCH_DEV,
@@ -380,83 +408,55 @@ _event_ctx = types.SimpleNamespace(
 
 
 def _safe_qsize(q: Any) -> int:
-    try:
-        return int(q.qsize())
-    except Exception:
-        return -1
+    return main_loop_safe_qsize(q)
 
 
 def _handle_supervisor_command(text: str, chat_id: int, tg_offset: int = 0):
-    """Handle supervisor slash-commands.
+    class _Ctx:
+        pending_ref = PENDING
+        consciousness = _consciousness
 
-    Returns:
-        True  — terminal command fully handled (caller should `continue`)
-        str   — dual-path note to prepend (caller falls through to LLM)
-        ""    — not a recognized command (falsy, caller falls through)
-    """
-    lowered = text.strip().lower()
+        @staticmethod
+        def send_with_budget(*args, **kwargs):
+            return send_with_budget(*args, **kwargs)
 
-    if lowered.startswith("/panic"):
-        send_with_budget(chat_id, "🛑 PANIC: stopping everything now.")
-        kill_workers()
-        st2 = load_state()
-        st2["tg_offset"] = tg_offset
-        save_state(st2)
-        raise SystemExit("PANIC")
+        @staticmethod
+        def kill_workers():
+            return kill_workers()
 
-    if lowered.startswith("/restart"):
-        st2 = load_state()
-        st2["session_id"] = uuid.uuid4().hex
-        st2["tg_offset"] = tg_offset
-        save_state(st2)
-        send_with_budget(chat_id, "♻️ Restarting (soft).")
-        ok, msg = safe_restart(reason="owner_restart", unsynced_policy="rescue_and_reset")
-        if not ok:
-            send_with_budget(chat_id, f"⚠️ Restart cancelled: {msg}")
-            return True
-        kill_workers()
-        os.execv(sys.executable, [sys.executable, __file__])
+        @staticmethod
+        def load_state():
+            return load_state()
 
-    # Dual-path commands: supervisor handles + LLM sees a note
-    if lowered.startswith("/status"):
-        status = status_text(WORKERS, PENDING, RUNNING, SOFT_TIMEOUT_SEC, HARD_TIMEOUT_SEC)
-        send_with_budget(chat_id, status, force_budget=True)
-        return "[Supervisor handled /status — status text already sent to chat]\n"
+        @staticmethod
+        def save_state(st):
+            return save_state(st)
 
-    if lowered.startswith("/review"):
-        queue_review_task(reason="owner:/review", force=True)
-        return "[Supervisor handled /review — review task queued]\n"
+        @staticmethod
+        def safe_restart(**kwargs):
+            return safe_restart(**kwargs)
 
-    if lowered.startswith("/evolve"):
-        parts = lowered.split()
-        action = parts[1] if len(parts) > 1 else "on"
-        turn_on = action not in ("off", "stop", "0")
-        st2 = load_state()
-        st2["evolution_mode_enabled"] = bool(turn_on)
-        save_state(st2)
-        if not turn_on:
-            PENDING[:] = [t for t in PENDING if str(t.get("type")) != "evolution"]
-            sort_pending()
-            persist_queue_snapshot(reason="evolve_off")
-        state_str = "ON" if turn_on else "OFF"
-        send_with_budget(chat_id, f"🧬 Evolution: {state_str}")
-        return f"[Supervisor handled /evolve — evolution toggled {state_str}]\n"
+        @staticmethod
+        def queue_review_task(**kwargs):
+            return queue_review_task(**kwargs)
 
-    if lowered.startswith("/bg"):
-        parts = lowered.split()
-        action = parts[1] if len(parts) > 1 else "status"
-        if action in ("start", "on", "1"):
-            result = _consciousness.start()
-            send_with_budget(chat_id, f"🧠 {result}")
-        elif action in ("stop", "off", "0"):
-            result = _consciousness.stop()
-            send_with_budget(chat_id, f"🧠 {result}")
-        else:
-            bg_status = "running" if _consciousness.is_running else "stopped"
-            send_with_budget(chat_id, f"🧠 Background consciousness: {bg_status}")
-        return f"[Supervisor handled /bg {action}]\n"
+        @staticmethod
+        def sort_pending():
+            return sort_pending()
 
-    return ""
+        @staticmethod
+        def persist_queue_snapshot(**kwargs):
+            return persist_queue_snapshot(**kwargs)
+
+        @staticmethod
+        def status_text():
+            return status_text(WORKERS, PENDING, RUNNING, SOFT_TIMEOUT_SEC, HARD_TIMEOUT_SEC)
+
+        @staticmethod
+        def exec_restart():
+            os.execv(sys.executable, [sys.executable, __file__])
+
+    return main_loop_handle_supervisor_command(text, chat_id, tg_offset, _Ctx)
 
 
 offset = int(load_state().get("tg_offset") or 0)
