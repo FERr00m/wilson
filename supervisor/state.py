@@ -87,3 +87,9 @@ def atomic_write_text(path: str, content: str):
     with open(temp_path, 'w') as f:
         f.write(content)
     os.replace(temp_path, path)
+
+def budget_pct(state: State) -> float:
+    """Calculate current budget usage percentage"""
+    if state.TOTAL_BUDGET_LIMIT <= 0:
+        return 0.0
+    return (state.spent_usd / state.TOTAL_BUDGET_LIMIT) * 100.0
