@@ -22,9 +22,6 @@ from ouroboros.llm import LLMClient, normalize_reasoning_effort, add_usage
 from ouroboros.tools.registry import ToolRegistry
 from ouroboros.context import compact_tool_history, compact_tool_history_llm
 from ouroboros.utils import utc_now_iso, append_jsonl, truncate_for_log, sanitize_tool_args_for_log, sanitize_tool_result_for_log, estimate_tokens
-from ouroboros.types import LLMUsage
-from ouroboros.pricing import estimate_cost
-from ouroboros import tool_executor as external_tool_executor
 
 log = logging.getLogger(__name__)
 
@@ -622,8 +619,7 @@ def run_llm_loop(
     active_effort = initial_effort
 
     llm_trace: Dict[str, Any] = {"assistant_notes": [], "tool_calls": []}
-    accumulated_usage_obj = LLMUsage()
-    accumulated_usage: Dict[str, Any] = accumulated_usage_obj.to_dict()
+    accumulated_usage: Dict[str, Any] = {}
     max_retries = 3
     # Wire module-level registry ref so tool_discovery handlers work outside run_llm_loop too
     from ouroboros.tools import tool_discovery as _td
@@ -752,7 +748,7 @@ def run_llm_loop(
                 emit_progress(content.strip())
                 llm_trace["assistant_notes"].append(content.strip()[:320])
 
-            error_count = external_tool_executor._handle_tool_calls(
+            error_count = _handle_tool_calls(
                 tool_calls, tools, drive_logs, task_id, stateful_executor,
                 messages, llm_trace, emit_progress
             )
@@ -859,7 +855,7 @@ def _call_llm_with_retry(
             # Calculate cost and emit event for EVERY attempt (including retries)
             cost = float(usage.get("cost") or 0)
             if not cost:
-                cost = estimate_cost(
+                cost = _estimate_cost(
                     model,
                     int(usage.get("prompt_tokens") or 0),
                     int(usage.get("completion_tokens") or 0),
