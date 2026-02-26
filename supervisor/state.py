@@ -74,3 +74,10 @@ def append_jsonl(path: str, data: Dict[str, Any]):
             f.write(json.dumps(data) + '\n')
     except Exception as e:
         print(f"Error appending JSONL: {e}")
+
+def atomic_write_text(path: str, content: str):
+    """Atomically write text to file"""
+    temp_path = f"{path}.tmp"
+    with open(temp_path, 'w') as f:
+        f.write(content)
+    os.replace(temp_path, path)
