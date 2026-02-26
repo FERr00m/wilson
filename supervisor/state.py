@@ -97,3 +97,7 @@ def budget_pct(state: State) -> float:
     if state.TOTAL_BUDGET_LIMIT <= 0:
         return 0.0
     return (state.spent_usd / state.TOTAL_BUDGET_LIMIT) * 100.0
+
+def budget_remaining(state: State) -> float:
+    """Calculate remaining budget in USD"""
+    return max(0.0, state.TOTAL_BUDGET_LIMIT - state.spent_usd)
