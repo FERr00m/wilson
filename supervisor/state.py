@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, Dict, Any
 import json
 from pathlib import Path
 import os
@@ -41,6 +41,7 @@ class State:
         if self.EVOLUTION_BUDGET_RESERVE >= self.TOTAL_BUDGET_LIMIT:
             self.EVOLUTION_BUDGET_RESERVE = min(5.0, self.TOTAL_BUDGET_LIMIT * 0.05)
 
+
 def load_state() -> State:
     """Load state from Google Drive JSON file"""
     try:
@@ -63,3 +64,13 @@ def save_state(state: State):
             json.dump(state.__dict__, f, indent=2)
     except Exception as e:
         print(f"Error saving state: {e}")
+
+def append_jsonl(path: str, data: Dict[str, Any]):
+    """Append JSON object to JSONL file"""
+    try:
+        full_path = Path(path)
+        full_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(full_path, 'a') as f:
+            f.write(json.dumps(data) + '\n')
+    except Exception as e:
+        print(f"Error appending JSONL: {e}")
