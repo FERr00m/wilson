@@ -15,6 +15,12 @@ def read_text(path: str) -> str:
     with open(path, "r", encoding="utf-8") as f:
         return f.read()
 
+def write_text(path: str, content: str) -> None:
+    """Write text to a file with UTF-8 encoding."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(content)
+
 def clip_text(text: str, max_len: int = 1000, suffix: str = "...") -> str:
     if len(text) <= max_len:
         return text
@@ -29,6 +35,13 @@ def get_git_info(repo_dir: str) -> tuple[str, str]:
     sha = os.getenv("GIT_SHA", "deadbeef")
     return branch, sha
 
+def safe_relpath(path: str, start: str = ".") -> str:
+    """Safely get relative path, fallback to absolute path on error"""
+    try:
+        return os.path.relpath(path, start)
+    except Exception:
+        return os.path.abspath(path)
+
 def compact_messages_for_display(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Simplified version that just passes through for test purposes"""
     return messages
@@ -39,8 +52,10 @@ def compact_tool_history(tool_history: List[Dict[str, Any]]) -> List[Dict[str, A
 def extract_tool_call_blocks(text: str) -> List[Dict[str, str]]:
     # Simplified regex for test
     pattern = r'```tool_call\s*name="([^"]+)"\s*id="([^"]+)"\s*(.*?)```'
-    return [{"name": m[0], "id": m[1], "arguments": m[2]} 
-            for m in re.findall(pattern, text, re.DOTALL)]
+    return [
+        {"name": m[0], "id": m[1], "arguments": m[2].strip()}
+        for m in re.findall(pattern, text, re.DOTALL)
+    ]
 
 def append_jsonl(path: str, data: dict) -> None:
     """Append a dictionary as a JSON line to the specified path."""
