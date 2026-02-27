@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import re
@@ -40,3 +41,9 @@ def extract_tool_call_blocks(text: str) -> List[Dict[str, str]]:
     pattern = r'```tool_call\s*name="([^"]+)"\s*id="([^"]+)"\s*(.*?)```'
     return [{"name": m[0], "id": m[1], "arguments": m[2]} 
             for m in re.findall(pattern, text, re.DOTALL)]
+
+def append_jsonl(path: str, data: dict) -> None:
+    """Append a dictionary as a JSON line to the specified path."""
+    with open(path, 'a', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False)
+        f.write('\n')
