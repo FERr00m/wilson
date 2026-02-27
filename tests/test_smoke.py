@@ -6,6 +6,7 @@ import time
 from datetime import datetime, timedelta
 from io import BytesIO
 from unittest.mock import MagicMock
+from pathlib import Path
 
 import pytest
 
@@ -57,10 +58,11 @@ def setup_state():
 def test_context_build_runtime_section():
     from ouroboros.context_core import _build_runtime_section
     from unittest.mock import MagicMock
+    from pathlib import Path
 
     env = MagicMock()
-    env.repo_dir = "/repo"
-    env.drive_root = "/drive"
+    env.repo_dir = Path("/repo")
+    env.drive_root = Path("/drive")
     task = {"id": "test", "type": "test"}
 
     # Mock the get_git_info to return known values
@@ -78,13 +80,16 @@ def test_context_build_memory_sections():
     from ouroboros.context_core import _build_memory_sections
     from ouroboros.memory import Memory
     from unittest.mock import MagicMock
+    from pathlib import Path
 
     memory = MagicMock(spec=Memory)
     memory.load_scratchpad.return_value = "Scratchpad content"
     memory.load_identity.return_value = "Identity content"
-    # Mock summary path does not exist
-    memory.drive_root = MagicMock()
-    memory.drive_root.__truediv__.return_value.exists.return_value = False
+    
+    # Properly mock Path behavior for drive_root
+    memory.drive_root = Path("/drive")
+    summary_path = memory.drive_root / "memory" / "dialogue_summary.md"
+    summary_path.exists = MagicMock(return_value=False)
 
     sections = _build_memory_sections(memory)
     assert len(sections) == 2
@@ -97,12 +102,13 @@ def test_context_build_memory_sections():
 def test_context_health_invariants():
     from ouroboros.context_core import _build_health_invariants
     from unittest.mock import MagicMock
+    from pathlib import Path
 
     env = MagicMock()
-    env.repo_path.return_value = "/repo/VERSION"
-    env.drive_path.return_value = "/drive/state/state.json"
+    env.repo_path = MagicMock(return_value=Path("/repo/VERSION"))
+    env.drive_path = MagicMock(return_value=Path("/drive/state/state.json"))
 
-    # Mock version file
+    # Mock version files
     def mock_read_text(path, *args, **kwargs):
         if "VERSION" in str(path):
             return "1.0.0"
@@ -126,14 +132,27 @@ def test_context_build_llm_messages():
     from ouroboros.context_core import build_llm_messages
     from ouroboros.memory import Memory
     from unittest.mock import MagicMock
+    from pathlib import Path
 
     env = MagicMock()
-    env.repo_path.return_value = "/repo/prompt"
-    env.drive_path.return_value = "/drive/state"
+    env.repo_path = MagicMock(return_value=Path("/repo/prompt"))
+    env.drive_path = MagicMock(return_value=Path("/drive/state"))
+
+    # Mock Memory with path objects
     memory = MagicMock(spec=Memory)
+    memory.drive_root = Path("/drive")
+    memory.load_scratchpad.return_value = "Scratchpad content"
+    memory.load_identity.return_value = "Identity content"
+    
+    # Create dummy file for identity.md
+    identity_path = memory.drive_root / "memory" / "identity.md"
+    identity_path.parent.mkdir(parents=True, exist_ok=True)
+    identity_path.write_text("Identity content", encoding="utf-8")
+    identity_path.exists = MagicMock(return_value=True)
+
     task = {"id": "test", "type": "user"}
 
-    # Mock the helper functions to return known values
+    # Mock helper functions
     def mock_build_runtime_section(env, task):
         return "## Runtime context\nRuntime data"
 
@@ -157,9 +176,9 @@ def test_context_build_llm_messages():
         # Check system block structure
         assert len(messages) == 2
         assert messages[0]["role"] == "system"
-        assert len(messages[0]["content"]) == 3  # 3 cached blocks
-        assert "Scratch" in messages[0]["content"][1]["text"]  # semi-stable
-        assert "Runtime data" in messages[0]["content"][2]["text"]  # dynamic
+        assert len(messages[0]["content"]) == 3
+        assert "Scratch" in messages[0]["content"][1]["text"]
+        assert "Runtime data" in messages[0]["content"][2]["text"]
 
     finally:
         build_llm_messages.__globals__["_build_runtime_section"] = original_build_runtime_section
