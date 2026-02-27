@@ -26,6 +26,12 @@ def clip_text(text: str, max_len: int = 1000, suffix: str = "...") -> str:
         return text
     return text[:max_len] + suffix
 
+def truncate_for_log(text: str, max_len: int = 200) -> str:
+    return clip_text(text, max_len, "...")
+
+def short(text: str, max_len: int = 50) -> str:
+    return clip_text(text, max_len, "…")
+
 def estimate_tokens(text: str) -> int:
     # Very rough estimate for test purposes
     return max(1, len(text.split()))
