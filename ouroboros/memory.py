@@ -4,8 +4,12 @@ from typing import Dict, Any
 
 log = logging.getLogger(__name__)
 
+class Memory:
+    def __init__(self, scratchpad: str, identity: str):
+        self.scratchpad = scratchpad
+        self.identity = identity
+
 def load_identity() -> str:
-    """Load identity manifesto from persistent storage"""
     try:
         path = pathlib.Path("/content/drive/MyDrive/Ouroboros/memory/identity.md")
         return path.read_text(encoding="utf-8")
@@ -14,7 +18,6 @@ def load_identity() -> str:
         return "# Identity Core\n\nPlaceholder for identity manifesto\n"
 
 def load_scratchpad() -> str:
-    """Load working memory from persistent storage"""
     try:
         path = pathlib.Path("/content/drive/MyDrive/Ouroboros/memory/scratchpad.md")
         return path.read_text(encoding="utf-8")
