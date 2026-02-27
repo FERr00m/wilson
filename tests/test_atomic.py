@@ -13,21 +13,28 @@ def test_atomic_write_text(tmp_path):
 
 def test_atomic_write_concurrent(tmp_path):
     file_path = tmp_path / "concurrent.txt"
-    
-    def writer():
-        for _ in range(5):
-            atomic_write_text(file_path, f"{os.getpid()}\n", mode="append")
+    lock_path = tmp_path / "lock"
+
+    def writer(process_id):
+        for i in range(5):
+            lock_fd = acquire_file_lock(lock_path, timeout_sec=2.0)
+            try:
+                current = file_path.read_text() if file_path.exists() else ""
+                new_content = current + f"{process_id}={i}\n"
+                atomic_write_text(file_path, new_content)
+            finally:
+                if lock_fd:
+                    release_file_lock(lock_path, lock_fd)
             time.sleep(0.01)
-    
-    # Fork to simulate concurrent processes
+
     pid = os.fork()
     if pid == 0:
-        writer()
+        writer(0)
         os._exit(0)
     else:
-        writer()
+        writer(1)
         os.wait()
-    
+
     content = file_path.read_text().splitlines()
-    assert len(content) == 10  # 5 writes from each process
-    assert len(set(content)) == 2  # Only 2 unique PIDs
+    assert len(content) == 10
+    assert set(content) == {f"0={i}" for i in range(5)} | {f"1={i}" for i in range(5)}
