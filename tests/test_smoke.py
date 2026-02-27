@@ -5,7 +5,7 @@ import sys
 import time
 from datetime import datetime, timedelta
 from io import BytesIO
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 from pathlib import Path
 
 import pytest
@@ -86,13 +86,10 @@ def test_context_build_memory_sections():
     memory.load_scratchpad.return_value = "Scratchpad content"
     memory.load_identity.return_value = "Identity content"
 
-    # Mock the drive_root to return Path objects with controlled exists()
+    # Set up path mocking for summary file check
     memory.drive_root = MagicMock()
-    # Create a mock path for dialogue_summary.md
     summary_path = MagicMock()
     summary_path.exists.return_value = False
-    # Set up path resolution chain
-    memory.drive_root.__truediv__.return_value = MagicMock()
     memory.drive_root.__truediv__.return_value.__truediv__.return_value = summary_path
 
     sections = _build_memory_sections(memory)
@@ -142,30 +139,35 @@ def test_context_build_llm_messages():
     env.repo_path = MagicMock(return_value=Path("/repo/prompt"))
     env.drive_path = MagicMock(return_value=Path("/drive/state"))
 
-    # Mock Memory properly
+    # Setup fully mocked Memory object with string return values
     memory = MagicMock(spec=Memory)
     memory.drive_root = MagicMock()
     memory.load_scratchpad.return_value = "Scratchpad content"
     memory.load_identity.return_value = "Identity content"
+    
+    # Mock all summary methods to return strings
+    memory.summarize_chat.return_value = "Chat summary"
+    memory.summarize_progress.return_value = "Progress summary"
+    memory.summarize_tools.return_value = "Tools summary"
+    memory.summarize_events.return_value = "Events summary"
+    memory.summarize_supervisor.return_value = "Supervisor summary"
 
-    # Mock identity.md exists() to return True
+    # Mock path.exists for identity.md
     identity_path = MagicMock()
     identity_path.exists.return_value = True
-    # Setup path resolution
-    memory.drive_root.__truediv__.return_value = MagicMock()
     memory.drive_root.__truediv__.return_value.__truediv__.return_value = identity_path
 
     task = {"id": "test", "type": "user"}
 
-    # Mock helper functions
+    # Mock internal functions to return valid strings
     original_build_runtime_section = build_llm_messages.__globals__["_build_runtime_section"]
     original_build_memory_sections = build_llm_messages.__globals__["_build_memory_sections"]
     original_build_health_invariants = build_llm_messages.__globals__["_build_health_invariants"]
 
     try:
-        # Simplified mocks for focus
+        # Mock all section builders to return strings
         build_llm_messages.__globals__["_build_runtime_section"] = lambda env, task: "Runtime section"
-        build_llm_messages.__globals__["_build_memory_sections"] = lambda memory: ["Memory section"]
+        build_llm_messages.__globals__["_build_memory_sections"] = lambda memory: ["Memory section 1", "Memory section 2"]
         build_llm_messages.__globals__["_build_health_invariants"] = lambda env: "Health section"
 
         messages, cap_info = build_llm_messages(env, memory, task)
@@ -173,9 +175,10 @@ def test_context_build_llm_messages():
         # Check system block structure
         assert len(messages) == 2
         assert messages[0]["role"] == "system"
-        assert len(messages[0]["content"]) == 3
+        assert len(messages[0]["content"]) == 3  # static, semi-stable, dynamic
 
     finally:
+        # Restore original functions
         build_llm_messages.__globals__["_build_runtime_section"] = original_build_runtime_section
         build_llm_messages.__globals__["_build_memory_sections"] = original_build_memory_sections
         build_llm_messages.__globals__["_build_health_invariants"] = original_build_health_invariants
