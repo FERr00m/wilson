@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 
 from ouroboros.memory import Memory
 from ouroboros.llm import LLMClient
-from ouroboros.review import ReviewSystem
+from ouroboros.context_core import ReviewSystem
 from ouroboros.utils import (
     utc_now_iso, read_text, clip_text, estimate_tokens, get_git_info,
     compact_messages_for_display, extract_tool_call_blocks,
@@ -45,4 +45,14 @@ class LLMLoop:
         messages: Optional[List[Dict[str, Any]]] = None,
         max_rounds: Optional[int] = None,
         **llm_kwargs: Any,
-    ) -> Dict[str, Any]: ...
+    ) -> Dict[str, Any]:
+        # Actual implementation would go here
+        pass  # Simplified for test purposes
+
+    def _execute_tool_call(self, tool_call):
+        # Implementation would go here
+        pass
+
+    def _handle_tool_response(self, tool_call_id: str, response):
+        # Implementation would go here
+        pass
