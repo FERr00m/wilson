@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 
 from ouroboros.memory import Memory
 from ouroboros.llm import LLMClient
-from ouroboros.context_core import ReviewSystem
+from ouroboros.review import ReviewSystem
 from ouroboros.utils import (
     utc_now_iso, read_text, clip_text, estimate_tokens, get_git_info,
     compact_messages_for_display, extract_tool_call_blocks,
