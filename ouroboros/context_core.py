@@ -15,6 +15,13 @@ from ouroboros.memory import Memory
 log = logging.getLogger(__name__)
 
 
+def _safe_read(path: pathlib.Path, fallback: str = "") -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except Exception:
+        return fallback
+
+
 def _build_user_content(task: Dict[str, Any]) -> Any:
     text = task.get("text", "")
     image_b64 = task.get("image_base64")
