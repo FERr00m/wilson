@@ -48,6 +48,17 @@ def safe_relpath(path: str, start: str = ".") -> str:
     except Exception:
         return os.path.abspath(path)
 
+def sanitize_task_for_event(task: Dict[str, Any]) -> Dict[str, Any]:
+    """Sanitize task data for safe logging in event logs"""
+    clean = task.copy()
+    for sensitive_key in ['secrets', 'api_key', 'password', 'token']:
+        if sensitive_key in clean:
+            clean[sensitive_key] = '[REDACTED]'
+    if 'arguments' in clean and isinstance(clean['arguments'], dict):
+        for arg in clean['arguments']:
+            if arg.lower() in ['token', 'key', 'secret']:
+                clean['arguments'][arg] = '[REDACTED]'
+    return clean
 def compact_messages_for_display(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Simplified version that just passes through for test purposes"""
     return messages
